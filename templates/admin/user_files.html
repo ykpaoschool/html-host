@@ -1,0 +1,72 @@
+{% extends "app_layout.html" %}
+{% block main %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-800">{{ target_user.display_name }} - {{ 'files' | t }}</h1>
+        <p class="text-sm text-gray-400 mt-1">{{ target_user.email }}</p>
+    </div>
+    <a href="{{ url_for('admin.index') }}"
+        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">
+        {{ 'back' | t }}
+    </a>
+</div>
+
+<!-- Folders -->
+{% if folders %}
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+    {% for folder in folders %}
+    <div class="bg-white rounded-2xl border border-gray-100 p-4">
+        <div class="flex flex-col items-center text-center">
+            <svg class="w-10 h-10 text-purple-400 mb-2" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+            <span class="text-sm font-medium text-gray-700 truncate w-full">{{ folder.name }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Files -->
+{% if files %}
+<div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+    <table class="w-full">
+        <thead>
+            <tr class="border-b border-gray-100">
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'size' | t }}</th>
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'uploaded_at' | t }}</th>
+                <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for file in files %}
+            <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                <td class="px-6 py-4">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                        <span class="text-sm font-medium text-gray-700">{{ file.name }}</span>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-500">{{ (file.size / 1024) | round(1) }} KB</td>
+                <td class="px-6 py-4 text-sm text-gray-500">{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="px-6 py-4 text-right">
+                    <form method="POST" action="{{ url_for('admin.delete_file', file_id=file.id) }}" class="inline"
+                        onsubmit="return confirm('{{ 'confirm_delete_file' | t }}')">
+                        <button type="submit"
+                            class="text-xs px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 transition font-medium">
+                            {{ 'delete' | t }}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if not folders and not files %}
+<div class="text-center py-20">
+    <p class="text-gray-400 text-lg">{{ 'no_files' | t }}</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,403 @@
+{% extends "app_layout.html" %}
+{% block main %}
+<div x-data="fileManager()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <!-- Breadcrumbs -->
+            <nav class="flex items-center gap-2 text-sm">
+                <a href="{{ url_for('dashboard.index') }}" class="text-gray-400 hover:text-purple-600 transition">{{ 'root_folder' | t }}</a>
+                {% for crumb in breadcrumbs %}
+                <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <span class="text-gray-700 font-medium">{{ crumb.name }}</span>
+                {% endfor %}
+            </nav>
+        </div>
+        <div class="flex items-center gap-3">
+            <button @click="showNewFolder = true"
+                class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                + {{ 'new_folder' | t }}
+            </button>
+            <button @click="$refs.fileInput.click()"
+                class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition hover:shadow-lg hover:shadow-purple-200">
+                {{ 'upload_file' | t }}
+            </button>
+            <input type="file" x-ref="fileInput" accept=".html,.htm" class="hidden"
+                @change="uploadFile($event)">
+        </div>
+    </div>
+
+    <!-- Upload Drop Zone -->
+    <div x-show="dragOver" x-transition
+        @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="dropFile($event)"
+        class="mb-6 border-2 border-dashed border-purple-300 rounded-2xl bg-purple-50/50 p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-purple-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <p class="text-purple-600 font-medium">{{ 'upload_hint' | t }}</p>
+    </div>
+
+    <!-- Hidden drag zone overlay for the whole page -->
+    <div @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="dropFile($event)" class="hidden"></div>
+
+    <!-- Folders -->
+    {% if folders %}
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+        {% for folder in folders %}
+        <a href="{{ url_for('dashboard.view_folder', folder_id=folder.id) }}"
+            class="group bg-white rounded-2xl border border-gray-100 p-4 hover:border-purple-200 hover:shadow-md hover:shadow-purple-50 transition-all duration-200">
+            <div class="flex flex-col items-center text-center">
+                <svg class="w-10 h-10 text-purple-400 mb-2 group-hover:text-purple-600 transition" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+                <span class="text-sm font-medium text-gray-700 group-hover:text-purple-700 truncate w-full">{{ folder.name }}</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Files -->
+    {% if files %}
+    <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'size' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'uploaded_at' | t }}</th>
+                    <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for file in files %}
+                <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                    <td class="px-6 py-4">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                            <span class="text-sm font-medium text-gray-700">{{ file.name }}</span>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-500">{{ (file.size / 1024) | round(1) }} KB</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            <!-- Share -->
+                            <button @click="shareFile({{ file.id }}, '{{ file.name }}')"
+                                class="p-2 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition" title="{{ 'share' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+                            </button>
+                            <!-- Rename -->
+                            <button @click="renameFile({{ file.id }}, '{{ file.name }}')"
+                                class="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition" title="{{ 'rename' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </button>
+                            <!-- Move -->
+                            <button @click="moveFile({{ file.id }})"
+                                class="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition" title="{{ 'move' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                            </button>
+                            <!-- Delete -->
+                            <button @click="deleteFile({{ file.id }}, '{{ file.name }}')"
+                                class="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="{{ 'delete' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- Empty State -->
+    {% if not folders and not files %}
+    <div class="text-center py-20"
+        @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="dropFile($event)">
+        <svg class="w-16 h-16 mx-auto text-gray-200 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <p class="text-gray-400 text-lg mb-2">{{ 'no_files' | t }}</p>
+        <p class="text-gray-300 text-sm">{{ 'upload_hint' | t }}</p>
+    </div>
+    {% endif %}
+
+    <!-- New Folder Modal -->
+    <div x-show="showNewFolder" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showNewFolder = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'new_folder' | t }}</h3>
+            <form method="POST" action="{{ url_for('dashboard.create_folder') }}">
+                <input type="hidden" name="parent_id" value="{{ current_folder.id if current_folder else '' }}">
+                <input type="text" name="name" required autofocus
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition mb-4"
+                    :placeholder="'{{ "folder_name" | t }}'">
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showNewFolder = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'create' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div x-show="showShare" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showShare = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ 'create_share' | t }}</h3>
+            <p class="text-sm text-gray-400 mb-4" x-text="shareFileName"></p>
+
+            <!-- Expiry -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">{{ 'expires_at' | t }}</label>
+                <div class="flex gap-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="expiry_type" value="never" x-model="expiryType" class="text-purple-600">
+                        <span class="text-sm text-gray-600">{{ 'never_expire' | t }}</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="expiry_type" value="custom" x-model="expiryType" class="text-purple-600">
+                        <span class="text-sm text-gray-600">{{ 'expires_at' | t }}</span>
+                    </label>
+                </div>
+                <input type="datetime-local" x-show="expiryType === 'custom'" x-model="expiryDate"
+                    class="mt-2 w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-purple-400 outline-none transition text-sm">
+            </div>
+
+            <div class="flex gap-3 justify-end">
+                <button @click="showShare = false"
+                    class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                <button @click="createShare()"
+                    class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'create' | t }}</button>
+            </div>
+
+            <!-- Share URL Result -->
+            <div x-show="shareUrl" x-transition class="mt-4 p-4 bg-gray-50 rounded-xl">
+                <p class="text-xs text-gray-400 mb-2">{{ 'share_link' | t }}</p>
+                <div class="flex items-center gap-2">
+                    <input type="text" :value="shareUrl" readonly
+                        class="flex-1 px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm text-gray-700">
+                    <button @click="copyShareUrl()"
+                        class="px-3 py-2 rounded-lg gradient-btn text-white text-sm transition"
+                        x-text="copied ? '✓' : '{{ "copy" }}'"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Modal -->
+    <div x-show="showRename" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showRename = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'rename' | t }}</h3>
+            <form :action="'/files/' + renameFileId + '/rename'" method="POST">
+                <input type="text" name="name" x-model="renameName" required
+                    class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition mb-4">
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showRename = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'save' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Move Modal -->
+    <div x-show="showMove" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showMove = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'move_to' | t }}</h3>
+            <form :action="'/files/' + moveFileId + '/move'" method="POST">
+                <div class="space-y-2 mb-4 max-h-60 overflow-y-auto">
+                    <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 cursor-pointer">
+                        <input type="radio" name="folder_id" value="" class="text-purple-600">
+                        <span class="text-sm text-gray-700">{{ 'root_folder' | t }}</span>
+                    </label>
+                    {% set ns = namespace(all_folders=[]) %}
+                    {% for folder in current_user.folders %}
+                    {% set ns.all_folders = ns.all_folders + [folder] %}
+                    {% endfor %}
+                    {% for folder in current_user.folders %}
+                    <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 cursor-pointer">
+                        <input type="radio" name="folder_id" value="{{ folder.id }}" class="text-purple-600">
+                        <span class="text-sm text-gray-700">{{ folder.get_path() }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showMove = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'move' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="showDelete" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showDelete = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">{{ 'delete' | t }}</h3>
+            <p class="text-sm text-gray-500 mb-4" x-text="deleteMessage"></p>
+            <form :action="'/files/' + deleteFileId + '/delete'" method="POST">
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showDelete = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition">{{ 'delete' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Share Links for current folder files -->
+    {% set user_files = current_user.files %}
+    {% set share_links = [] %}
+    {% for f in user_files %}
+    {% for sl in f.share_links %}
+    {% set share_links = share_links + [sl] %}
+    {% endfor %}
+    {% endfor %}
+    {% if share_links %}
+    <div class="mt-8">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'manage_shares' | t }}</h3>
+        <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'share_link' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'expires_at' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'active' | t }}</th>
+                        <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for link in share_links %}
+                    <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                        <td class="px-6 py-3 text-sm text-gray-700">{{ link.file.name }}</td>
+                        <td class="px-6 py-3">
+                            <a href="{{ url_for('share.view', token=link.token) }}" target="_blank"
+                                class="text-sm text-purple-600 hover:text-purple-800 transition truncate block max-w-xs">
+                                {{ url_for('share.view', token=link.token, _external=True) }}
+                            </a>
+                        </td>
+                        <td class="px-6 py-3 text-sm text-gray-500">
+                            {{ link.expires_at.strftime('%Y-%m-%d %H:%M') if link.expires_at else ('never_expire' | t) }}
+                        </td>
+                        <td class="px-6 py-3">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                {{ 'bg-green-50 text-green-700' if link.is_active and not link.is_expired()
+                                else 'bg-red-50 text-red-700' }}">
+                                {{ ('active' | t) if link.is_active and not link.is_expired() else ('expired' if link.is_expired() else 'inactive' | t) }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-3 text-right">
+                            <form method="POST" action="{{ url_for('dashboard.update_share', share_id=link.id) }}" class="inline">
+                                <input type="hidden" name="action" value="toggle">
+                                <button type="submit"
+                                    class="text-xs px-2 py-1 rounded-lg {{ 'text-red-500 hover:bg-red-50' if link.is_active else 'text-green-500 hover:bg-green-50' }} transition">
+                                    {{ ('inactive' | t) if link.is_active else ('active' | t) }}
+                                </button>
+                            </form>
+                            <form method="POST" action="{{ url_for('dashboard.update_share', share_id=link.id) }}" class="inline"
+                                onsubmit="return confirm('{{ 'confirm_delete_file' | t }}')">
+                                <input type="hidden" name="action" value="delete">
+                                <button type="submit" class="text-xs px-2 py-1 rounded-lg text-red-500 hover:bg-red-50 transition">{{ 'delete' | t }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function fileManager() {
+    return {
+        showNewFolder: false,
+        showShare: false,
+        showRename: false,
+        showMove: false,
+        showDelete: false,
+        dragOver: false,
+        shareFileId: null,
+        shareFileName: '',
+        shareUrl: '',
+        copied: false,
+        expiryType: 'never',
+        expiryDate: '',
+        renameFileId: null,
+        renameName: '',
+        moveFileId: null,
+        deleteFileId: null,
+        deleteMessage: '',
+        currentFolderId: {{ current_folder.id if current_folder else 'null' }},
+
+        uploadFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folder_id', this.currentFolderId || '');
+            fetch('/files/upload', { method: 'POST', body: formData })
+                .then(() => window.location.reload());
+        },
+
+        dropFile(event) {
+            this.dragOver = false;
+            const file = event.dataTransfer.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folder_id', this.currentFolderId || '');
+            fetch('/files/upload', { method: 'POST', body: formData })
+                .then(() => window.location.reload());
+        },
+
+        shareFile(fileId, fileName) {
+            this.shareFileId = fileId;
+            this.shareFileName = fileName;
+            this.shareUrl = '';
+            this.copied = false;
+            this.expiryType = 'never';
+            this.expiryDate = '';
+            this.showShare = true;
+        },
+
+        createShare() {
+            const formData = new FormData();
+            if (this.expiryType === 'custom' && this.expiryDate) {
+                formData.append('expires_at', new Date(this.expiryDate).toISOString());
+            }
+            fetch('/files/' + this.shareFileId + '/share', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    this.shareUrl = data.url;
+                });
+        },
+
+        copyShareUrl() {
+            navigator.clipboard.writeText(this.shareUrl).then(() => {
+                this.copied = true;
+                setTimeout(() => this.copied = false, 2000);
+            });
+        },
+
+        renameFile(fileId, fileName) {
+            this.renameFileId = fileId;
+            this.renameName = fileName;
+            this.showRename = true;
+        },
+
+        moveFile(fileId) {
+            this.moveFileId = fileId;
+            this.showMove = true;
+        },
+
+        deleteFile(fileId, fileName) {
+            this.deleteFileId = fileId;
+            this.deleteMessage = "{{ 'confirm_delete_file' | t }}";
+            this.showDelete = true;
+        }
+    }
+}
+</script>
+{% endblock %}

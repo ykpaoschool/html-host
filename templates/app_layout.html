@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ 'dashboard' | t }} - HTMLHost{% endblock %}
+
+{% block content %}
+<div class="min-h-screen flex" x-data="{ sidebarOpen: true }">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-white border-r border-gray-100 flex flex-col" :class="sidebarOpen ? '' : 'hidden'">
+        <!-- Logo -->
+        <div class="p-6 border-b border-gray-100">
+            <a href="{{ url_for('dashboard.index') }}" class="text-xl font-bold gradient-text">HTMLHost</a>
+        </div>
+
+        <!-- Nav -->
+        <nav class="flex-1 p-4 space-y-1">
+            <a href="{{ url_for('dashboard.index') }}"
+                class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition
+                {{ 'bg-purple-50 text-purple-700' if request.endpoint == 'dashboard.index' or request.endpoint == 'dashboard.view_folder'
+                else 'text-gray-600 hover:bg-gray-50' }}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                {{ 'files' | t }}
+            </a>
+            {% if current_user.is_admin %}
+            <a href="{{ url_for('admin.index') }}"
+                class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition
+                {{ 'bg-purple-50 text-purple-700' if 'admin' in request.endpoint
+                else 'text-gray-600 hover:bg-gray-50' }}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
+                {{ 'admin' | t }}
+            </a>
+            {% endif %}
+        </nav>
+
+        <!-- User Info -->
+        <div class="p-4 border-t border-gray-100">
+            <div class="flex items-center gap-3 px-4 py-2">
+                <div class="w-8 h-8 rounded-full gradient-bg flex items-center justify-center text-white text-sm font-semibold">
+                    {{ current_user.display_name[0] | upper }}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-800 truncate">{{ current_user.display_name }}</p>
+                    <p class="text-xs text-gray-400 truncate">{{ current_user.email }}</p>
+                </div>
+                <a href="{{ url_for('auth.logout') }}" class="text-gray-400 hover:text-gray-600 transition" title="{{ 'logout' | t }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                </a>
+            </div>
+            <!-- Language -->
+            <div class="flex justify-center gap-3 mt-2 px-4">
+                {% for code, name in LANGUAGES.items() %}
+                <a href="?lang={{ code }}" class="text-xs {{ 'text-purple-600 font-semibold' if lang == code else 'text-gray-400 hover:text-gray-600' }} transition">
+                    {{ name }}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto">
+        <div class="p-8">
+            {% block main %}{% endblock %}
+        </div>
+    </main>
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+[Unit]
+Description=HTMLHost - HTML File Hosting Service
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/htmlhost
+ExecStart=/opt/htmlhost/venv/bin/gunicorn -w 2 -b 127.0.0.1:5001 "app:app"
+Restart=always
+RestartSec=3
+Environment=SECRET_KEY=change-this-to-a-secure-random-string
+
+[Install]
+WantedBy=multi-user.target

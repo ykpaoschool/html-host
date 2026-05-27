@@ -1,0 +1,148 @@
+import os
+import shutil
+
+import bcrypt
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+
+from i18n import t
+from models import File, Folder, ShareLink, User, db
+
+admin_bp = Blueprint("admin", __name__)
+
+
+def admin_required(f):
+    from functools import wraps
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_admin:
+            return render_template("403.html"), 403
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+@admin_bp.route("/")
+@login_required
+@admin_required
+def index():
+    users = User.query.order_by(User.created_at).all()
+    return render_template("admin/users.html", users=users)
+
+
+@admin_bp.route("/users/create", methods=["GET", "POST"])
+@login_required
+@admin_required
+def create_user():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        display_name = request.form.get("display_name", "").strip()
+        is_admin = request.form.get("is_admin") == "on"
+
+        if not email or not password or not display_name:
+            flash("All fields are required", "error")
+            return redirect(request.referrer)
+
+        if User.query.filter_by(email=email).first():
+            flash("Email already exists", "error")
+            return redirect(request.referrer)
+
+        password_hash = bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
+
+        user = User(
+            email=email,
+            password_hash=password_hash,
+            display_name=display_name,
+            is_admin=is_admin,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        flash(t("user_created"), "success")
+        return redirect(url_for("admin.index"))
+
+    return render_template("admin/create_user.html")
+
+
+@admin_bp.route("/users/<int:user_id>/edit", methods=["GET", "POST"])
+@login_required
+@admin_required
+def edit_user(user_id):
+    user = User.query.get_or_404(user_id)
+    if request.method == "POST":
+        user.display_name = request.form.get("display_name", "").strip()
+        user.is_admin = request.form.get("is_admin") == "on"
+
+        new_password = request.form.get("password", "").strip()
+        if new_password:
+            user.password_hash = bcrypt.hashpw(
+                new_password.encode("utf-8"), bcrypt.gensalt()
+            ).decode("utf-8")
+
+        db.session.commit()
+        flash(t("user_updated"), "success")
+        return redirect(url_for("admin.index"))
+
+    return render_template("admin/edit_user.html", edit_user=user)
+
+
+@admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def delete_user(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash("Cannot delete yourself", "error")
+        return redirect(url_for("admin.index"))
+
+    user_upload_dir = os.path.join(
+        current_app.config["UPLOAD_FOLDER"], str(user.id)
+    )
+    if os.path.exists(user_upload_dir):
+        shutil.rmtree(user_upload_dir)
+
+    db.session.delete(user)
+    db.session.commit()
+
+    flash(t("user_deleted"), "success")
+    return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/users/<int:user_id>/files")
+@login_required
+@admin_required
+def user_files(user_id):
+    user = User.query.get_or_404(user_id)
+    folders = Folder.query.filter_by(user_id=user_id, parent_id=None).order_by(
+        Folder.name
+    ).all()
+    files = File.query.filter_by(user_id=user_id, folder_id=None).order_by(
+        File.name
+    ).all()
+    return render_template(
+        "admin/user_files.html", target_user=user, folders=folders, files=files
+    )
+
+
+@admin_bp.route("/files/<int:file_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def delete_file(file_id):
+    file = File.query.get_or_404(file_id)
+    user_id = file.user_id
+
+    full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
+    if os.path.exists(full_path):
+        os.remove(full_path)
+
+    for link in file.share_links:
+        db.session.delete(link)
+    db.session.delete(file)
+    db.session.commit()
+
+    flash(t("delete") + " ✓", "success")
+    return redirect(url_for("admin.user_files", user_id=user_id))

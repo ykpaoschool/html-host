@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ 'site_name' | t }}{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .gradient-btn { background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%); }
+        .gradient-btn:hover { background: linear-gradient(135deg, #6d28d9 0%, #4338ca 100%); }
+        .gradient-text { background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-50 min-h-screen">
+    {% block content %}{% endblock %}
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>
