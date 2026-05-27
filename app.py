@@ -1,11 +1,15 @@
+import logging
 import os
 
 from flask import Flask, redirect, url_for
 from flask_login import LoginManager, current_user
+from sqlalchemy import inspect, text
 
 from config import Config
 from i18n import get_language, load_translations, t_filter
 from models import User, db
+
+logger = logging.getLogger(__name__)
 
 login_manager = LoginManager()
 login_manager.login_view = "auth.login"
@@ -38,12 +42,36 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _migrate_schema(db)
 
     @app.context_processor
     def inject_lang():
         return {"lang": get_language()}
 
     return app
+
+
+def _migrate_schema(db):
+    """Auto-add missing columns to existing tables.
+
+    Handles the case where db.create_all() only creates new tables
+    but cannot alter existing ones (e.g. adding columns after deployment).
+    """
+    with db.engine.connect() as conn:
+        for table_name in db.metadata.tables:
+            existing = {c["name"] for c in inspect(db.engine).get_columns(table_name)}
+            model = db.metadata.tables[table_name]
+            for col in model.columns:
+                if col.name not in existing:
+                    col_type = col.type.compile(db.engine.dialect)
+                    default = ""
+                    if col.default is not None and col.default.is_scalar:
+                        default = f" DEFAULT {col.default.arg!r}"
+                    nullable = "" if col.nullable else " NOT NULL"
+                    sql = f'ALTER TABLE "{table_name}" ADD COLUMN {col.name} {col_type}{default}{nullable}'
+                    conn.execute(text(sql))
+                    conn.commit()
+                    logger.info("Auto-migrated: %s", sql)
 
 
 @login_manager.user_loader
