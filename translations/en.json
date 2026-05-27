@@ -62,5 +62,8 @@
   "move_to": "Move to",
   "share_not_found": "Share link not found or expired",
   "shared_file": "Shared File",
-  "no_share_links": "No share links yet"
+  "no_share_links": "No share links yet",
+  "login_sso_only": "This account uses SSO login. Please use the appropriate method.",
+  "auth_provider_local": "Local Account",
+  "auth_provider_microsoft": "Microsoft SSO"
 }

@@ -18,13 +18,16 @@ def login():
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         user = User.query.filter_by(email=email).first()
-        if user and bcrypt.checkpw(
+        if user and user.auth_provider != "local":
+            flash(t("login_sso_only"), "error")
+        elif user and user.password_hash and bcrypt.checkpw(
             password.encode("utf-8"), user.password_hash.encode("utf-8")
         ):
             login_user(user)
             next_page = request.args.get("next", url_for("dashboard.index"))
             return redirect(next_page)
-        flash(t("login_error"), "error")
+        else:
+            flash(t("login_error"), "error")
     return render_template("login.html")
 
 
@@ -50,6 +53,7 @@ def setup():
         user = User(
             email=email,
             password_hash=password_hash,
+            auth_provider="local",
             display_name=display_name,
             is_admin=True,
         )

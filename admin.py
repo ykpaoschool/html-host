@@ -56,6 +56,7 @@ def create_user():
         user = User(
             email=email,
             password_hash=password_hash,
+            auth_provider="local",
             display_name=display_name,
             is_admin=is_admin,
         )
@@ -78,7 +79,7 @@ def edit_user(user_id):
         user.is_admin = request.form.get("is_admin") == "on"
 
         new_password = request.form.get("password", "").strip()
-        if new_password:
+        if new_password and user.auth_provider == "local":
             user.password_hash = bcrypt.hashpw(
                 new_password.encode("utf-8"), bcrypt.gensalt()
             ).decode("utf-8")
