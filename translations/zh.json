@@ -62,5 +62,8 @@
   "move_to": "移动到",
   "share_not_found": "分享链接不存在或已失效",
   "shared_file": "分享的文件",
-  "no_share_links": "暂无分享链接"
+  "no_share_links": "暂无分享链接",
+  "login_sso_only": "此账号使用 SSO 登录，请使用对应方式登录",
+  "auth_provider_local": "本地账号",
+  "auth_provider_microsoft": "Microsoft SSO"
 }
