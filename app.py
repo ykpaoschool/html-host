@@ -52,17 +52,23 @@ def create_app():
 
 
 def _migrate_schema(db):
-    """Auto-add missing columns to existing tables.
+    """Auto-migrate schema: add missing columns and relax nullable constraints.
 
     Handles the case where db.create_all() only creates new tables
-    but cannot alter existing ones (e.g. adding columns after deployment).
+    but cannot alter existing ones (e.g. adding columns, changing nullable
+    after deployment).
+
+    SQLite does not support ALTER COLUMN, so nullable relaxations use
+    the table-rebuild pattern (rename → create → copy → drop → rename).
     """
     with db.engine.connect() as conn:
         for table_name in db.metadata.tables:
-            existing = {c["name"] for c in inspect(db.engine).get_columns(table_name)}
+            db_cols = {c["name"]: c for c in inspect(db.engine).get_columns(table_name)}
             model = db.metadata.tables[table_name]
+
+            # 1. Add missing columns
             for col in model.columns:
-                if col.name not in existing:
+                if col.name not in db_cols:
                     col_type = col.type.compile(db.engine.dialect)
                     default = ""
                     if col.default is not None and col.default.is_scalar:
@@ -72,6 +78,49 @@ def _migrate_schema(db):
                     conn.execute(text(sql))
                     conn.commit()
                     logger.info("Auto-migrated: %s", sql)
+
+            # 2. Relax nullable: model says nullable but DB says NOT NULL
+            nullable_to_relax = []
+            for col in model.columns:
+                if col.name in db_cols and col.nullable and not db_cols[col.name]["nullable"]:
+                    nullable_to_relax.append(col.name)
+            if nullable_to_relax:
+                _rebuild_table(conn, db, table_name, model, nullable_to_relax)
+                logger.info(
+                    "Relaxed nullable on %s.%s", table_name, nullable_to_relax
+                )
+
+
+def _rebuild_table(conn, db, table_name, model, nullable_cols):
+    """Rebuild a SQLite table to relax NOT NULL constraints.
+
+    Uses the standard SQLite table-rebuild pattern:
+    rename old → create new → copy data → drop old → rename new
+    """
+    tmp_name = f"_old_{table_name}"
+
+    # Build column definitions from model
+    col_defs = []
+    for col in model.columns:
+        col_type = col.type.compile(db.engine.dialect)
+        default = ""
+        if col.default is not None and col.default.is_scalar:
+            default = f" DEFAULT {col.default.arg!r}"
+        nullable = "" if col.nullable else " NOT NULL"
+        pk = " PRIMARY KEY" if col.primary_key else ""
+        col_defs.append(f"{col.name} {col_type}{pk}{default}{nullable}")
+
+    col_names = ", ".join(c.name for c in model.columns)
+
+    conn.execute(text(f'ALTER TABLE "{table_name}" RENAME TO "{tmp_name}"'))
+    conn.execute(
+        text(f'CREATE TABLE "{table_name}" ({", ".join(col_defs)})')
+    )
+    conn.execute(
+        text(f'INSERT INTO "{table_name}" ({col_names}) SELECT {col_names} FROM "{tmp_name}"')
+    )
+    conn.execute(text(f'DROP TABLE "{tmp_name}"'))
+    conn.commit()
 
 
 @login_manager.user_loader
