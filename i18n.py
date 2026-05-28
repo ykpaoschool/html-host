@@ -20,9 +20,15 @@ def get_language():
     return session.get("lang", current_app.config["DEFAULT_LANGUAGE"])
 
 
-def t(key):
+def t(key, **kwargs):
     lang = get_language()
-    return _translations.get(lang, {}).get(key, key)
+    value = _translations.get(lang, {}).get(key, key)
+    if kwargs:
+        try:
+            return value.format(**kwargs)
+        except (KeyError, IndexError):
+            return value
+    return value
 
 
 def t_filter(key):

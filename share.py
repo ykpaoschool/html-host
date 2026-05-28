@@ -17,7 +17,7 @@ def view(token):
     file = link.file
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
     if not os.path.exists(full_path):
-        return render_template("share/not_found.html"), 404
+        return render_template("share/not_found.html", reason="file_moved"), 404
 
     with open(full_path, "r", encoding="utf-8") as f:
         content = f.read()
