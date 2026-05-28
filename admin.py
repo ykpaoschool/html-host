@@ -106,6 +106,15 @@ def delete_user(user_id):
     if os.path.exists(user_upload_dir):
         shutil.rmtree(user_upload_dir)
 
+    # Delete related objects explicitly in the correct order
+    # to avoid cascade conflicts with self-referential Folder
+    for file in list(user.files):
+        for link in list(file.share_links):
+            db.session.delete(link)
+        db.session.delete(file)
+    folders = sorted(user.folders, key=lambda f: f.get_path().count("/"), reverse=True)
+    for folder in folders:
+        db.session.delete(folder)
     db.session.delete(user)
     db.session.commit()
 

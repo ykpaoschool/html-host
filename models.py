@@ -26,7 +26,7 @@ class Folder(db.Model):
     name = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    parent = db.relationship("Folder", remote_side=[id], backref=db.backref("children", cascade="all, delete-orphan"))
+    parent = db.relationship("Folder", remote_side=[id], backref="children")
     files = db.relationship("File", backref="folder", lazy=True, cascade="all, delete-orphan")
 
     def get_path(self):
