@@ -118,7 +118,7 @@
     {% endif %}
 
     <!-- New Folder Modal -->
-    <div x-show="showNewFolder" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showNewFolder = false">
+    <div x-cloak x-show="showNewFolder" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showNewFolder = false">
         <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'new_folder' | t }}</h3>
             <form method="POST" action="{{ url_for('dashboard.create_folder') }}">
@@ -137,7 +137,7 @@
     </div>
 
     <!-- Share Modal -->
-    <div x-show="showShare" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showShare = false">
+    <div x-cloak x-show="showShare" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showShare = false">
         <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
             <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ 'create_share' | t }}</h3>
             <p class="text-sm text-gray-400 mb-4" x-text="shareFileName"></p>
@@ -181,7 +181,7 @@
     </div>
 
     <!-- Rename Modal -->
-    <div x-show="showRename" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showRename = false">
+    <div x-cloak x-show="showRename" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showRename = false">
         <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'rename' | t }}</h3>
             <form :action="'/files/' + renameFileId + '/rename'" method="POST">
@@ -198,7 +198,7 @@
     </div>
 
     <!-- Move Modal -->
-    <div x-show="showMove" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showMove = false">
+    <div x-cloak x-show="showMove" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showMove = false">
         <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'move_to' | t }}</h3>
             <form :action="'/files/' + moveFileId + '/move'" method="POST">
@@ -229,7 +229,7 @@
     </div>
 
     <!-- Delete Confirmation Modal -->
-    <div x-show="showDelete" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showDelete = false">
+    <div x-cloak x-show="showDelete" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showDelete = false">
         <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
             <h3 class="text-lg font-semibold text-gray-800 mb-2">{{ 'delete' | t }}</h3>
             <p class="text-sm text-gray-500 mb-4" x-text="deleteMessage"></p>
