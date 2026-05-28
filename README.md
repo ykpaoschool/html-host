@@ -7,10 +7,12 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 ## Features
 
 - Upload and manage `.html` / `.htm` files
-- Organize files in nested folders
+- Organize files in nested folders, with rename/move sync across disk and database
 - Generate public share links with optional expiration
 - Preview shared HTML in a sandboxed iframe
+- Microsoft Entra ID (Azure AD) SSO login via OAuth 2.0
 - Admin panel for managing users and browsing user files
+- Automatic database schema migration on startup
 - Chinese and English interface, with Chinese as the default language
 - Lightweight deployment with Flask + Gunicorn + Nginx
 
@@ -20,6 +22,7 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 - Flask
 - Flask-Login
 - Flask-SQLAlchemy
+- Authlib (Microsoft SSO OAuth)
 - SQLite by default
 - Tailwind CSS and Alpine.js via CDN
 
@@ -56,7 +59,19 @@ venv/bin/python app.py
 
 ### 3. First-time setup
 
-On first launch, the app initializes the database automatically. The first registered user is intended to complete the initial setup flow and become the administrator.
+On first launch, the app initializes the database automatically. The first registered user completes the initial setup flow and becomes the administrator.
+
+### 4. (Optional) Enable Microsoft SSO
+
+Set the following environment variables to enable Microsoft Entra ID (Azure AD) single sign-on:
+
+```bash
+export MICROSOFT_CLIENT_ID="your-client-id"
+export MICROSOFT_CLIENT_SECRET="your-client-secret"
+export MICROSOFT_TENANT_ID="your-tenant-id"
+```
+
+When these are configured, a "Sign in with Microsoft" button appears on the login page. SSO users are created automatically on first login with `is_admin=False`. If any variable is left empty (the default), SSO is disabled.
 
 ## Production Run
 
@@ -81,6 +96,9 @@ Configuration is provided through environment variables.
 | --- | --- | --- |
 | `SECRET_KEY` | Flask secret key | `dev-secret-key-change-in-production` |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///data.db` |
+| `MICROSOFT_CLIENT_ID` | Microsoft SSO OAuth client ID | `""` (SSO disabled) |
+| `MICROSOFT_CLIENT_SECRET` | Microsoft SSO OAuth client secret | `""` |
+| `MICROSOFT_TENANT_ID` | Microsoft Entra ID tenant ID | `""` |
 
 Other built-in defaults:
 
@@ -100,27 +118,32 @@ export DATABASE_URL="sqlite:///data.db"
 
 ```text
 .
-├── app.py              # Flask app factory and blueprint registration
-├── auth.py             # Authentication and first-user setup
+├── app.py              # Flask app factory, blueprint registration, schema migration
+├── auth.py             # Authentication, first-user setup, Microsoft SSO
 ├── dashboard.py        # File, folder, upload, and share management
 ├── share.py            # Public shared page routes
 ├── admin.py            # Admin panel routes
-├── models.py           # SQLAlchemy models
+├── models.py           # SQLAlchemy models (User, Folder, File, ShareLink)
 ├── config.py           # Application configuration
 ├── i18n.py             # Translation loading and language switching
+├── run.sh              # Dev/prod launcher script
+├── requirements.txt    # Python dependencies
 ├── templates/          # Jinja2 templates
 ├── translations/       # Chinese and English translations
 ├── uploads/            # Uploaded HTML files
+├── TRADEMARK.md        # Trademark policy
 ├── htmlhost.service    # Example systemd service
 └── nginx.conf          # Example Nginx reverse proxy config
 ```
 
 ## How It Works
 
-- Uploaded files are stored on disk under `uploads/<user_id>/...`
+- Uploaded files are stored on disk under `uploads/<user_id>/...`; folder renames and moves sync both the database and the filesystem
 - Folder hierarchy is stored in the database through a self-referential `Folder` model
 - Public sharing uses token-based links such as `/s/<token>`
 - Shared pages are rendered inside a sandboxed iframe for safer previewing
+- Users authenticate either with a local password or via Microsoft Entra ID SSO; SSO users have no password stored locally
+- On startup, the app automatically migrates missing database columns and rebuilds tables when needed (preserving foreign-key and unique constraints)
 
 ## Dependencies
 
@@ -129,6 +152,8 @@ Main Python dependencies:
 - Flask
 - Flask-SQLAlchemy
 - Flask-Login
+- Authlib
+- requests
 - bcrypt
 - gunicorn
 
