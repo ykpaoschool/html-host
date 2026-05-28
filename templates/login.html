@@ -40,6 +40,18 @@
                     {{ 'login_button' | t }}
                 </button>
             </form>
+
+            {% if sso_enabled %}
+            <div class="relative my-6">
+                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-200"></div></div>
+                <div class="relative flex justify-center text-sm"><span class="bg-white px-3 text-gray-400">{{ 'or' | t }}</span></div>
+            </div>
+            <a href="{{ url_for('auth.login_microsoft') }}"
+                class="w-full py-3 rounded-xl font-semibold border border-gray-200 bg-white hover:bg-gray-50 transition-all duration-200 flex items-center justify-center gap-3 text-gray-700">
+                <svg class="w-5 h-5" viewBox="0 0 23 23"><path fill="#f25022" d="M1 1h10v10H1z"/><path fill="#00a4ef" d="M1 12h10v10H1z"/><path fill="#7fba00" d="M12 1h10v10H12z"/><path fill="#ffb900" d="M12 12h10v10H12z"/></svg>
+                {{ 'sso_microsoft' | t }}
+            </a>
+            {% endif %}
         </div>
 
         <!-- Language Switch -->
