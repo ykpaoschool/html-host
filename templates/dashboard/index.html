@@ -42,13 +42,16 @@
     {% if folders %}
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
         {% for folder in folders %}
-        <a href="{{ url_for('dashboard.view_folder', folder_id=folder.id) }}"
-            class="group bg-white rounded-2xl border border-gray-100 p-4 hover:border-purple-200 hover:shadow-md hover:shadow-purple-50 transition-all duration-200">
-            <div class="flex flex-col items-center text-center">
+        <div class="group relative bg-white rounded-2xl border border-gray-100 p-4 hover:border-purple-200 hover:shadow-md hover:shadow-purple-50 transition-all duration-200">
+            <a href="{{ url_for('dashboard.view_folder', folder_id=folder.id) }}" class="flex flex-col items-center text-center">
                 <svg class="w-10 h-10 text-purple-400 mb-2 group-hover:text-purple-600 transition" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
                 <span class="text-sm font-medium text-gray-700 group-hover:text-purple-700 truncate w-full">{{ folder.name }}</span>
-            </div>
-        </a>
+            </a>
+            <button @click="deleteFolder({{ folder.id }}, '{{ folder.name }}')"
+                class="absolute top-2 right-2 p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition" title="{{ 'delete' | t }}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        </div>
         {% endfor %}
     </div>
     {% endif %}
@@ -244,6 +247,22 @@
         </div>
     </div>
 
+    <!-- Delete Folder Confirmation Modal -->
+    <div x-cloak x-show="showDeleteFolder" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showDeleteFolder = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">{{ 'delete' | t }}</h3>
+            <p class="text-sm text-gray-500 mb-4" x-text="deleteMessage"></p>
+            <form :action="'/folders/' + deleteFolderId + '/delete'" method="POST">
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showDeleteFolder = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition">{{ 'delete' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Share Links for current folder files -->
     {% set user_files = current_user.files %}
     {% set share_links = [] %}
@@ -317,6 +336,7 @@ function fileManager() {
         showRename: false,
         showMove: false,
         showDelete: false,
+        showDeleteFolder: false,
         dragOver: false,
         shareFileId: null,
         shareFileName: '',
@@ -328,6 +348,7 @@ function fileManager() {
         renameName: '',
         moveFileId: null,
         deleteFileId: null,
+        deleteFolderId: null,
         deleteMessage: '',
         currentFolderId: {{ current_folder.id if current_folder else 'null' }},
 
@@ -396,6 +417,12 @@ function fileManager() {
             this.deleteFileId = fileId;
             this.deleteMessage = "{{ 'confirm_delete_file' | t }}";
             this.showDelete = true;
+        },
+
+        deleteFolder(folderId, folderName) {
+            this.deleteFolderId = folderId;
+            this.deleteMessage = "{{ 'confirm_delete_folder' | t }}";
+            this.showDeleteFolder = true;
         }
     }
 }
