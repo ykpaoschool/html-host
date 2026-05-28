@@ -1,6 +1,7 @@
 import logging
 import os
 
+from authlib.integrations.flask_client import OAuth
 from flask import Flask, redirect, url_for
 from flask_login import LoginManager, current_user
 from sqlalchemy import inspect, text
@@ -21,6 +22,23 @@ def create_app():
 
     db.init_app(app)
     login_manager.init_app(app)
+
+    # Microsoft SSO via Authlib
+    sso_enabled = bool(app.config["MICROSOFT_CLIENT_ID"])
+    if sso_enabled:
+        oauth = OAuth(app)
+        tenant_id = app.config["MICROSOFT_TENANT_ID"]
+        oauth.register(
+            name="microsoft",
+            client_id=app.config["MICROSOFT_CLIENT_ID"],
+            client_secret=app.config["MICROSOFT_CLIENT_SECRET"],
+            server_metadata_url=(
+                f"https://login.microsoftonline.com/{tenant_id}/v2.0/"
+                f".well-known/openid-configuration"
+            ),
+            client_kwargs={"scope": "openid email profile User.Read"},
+        )
+        app.oauth = oauth
 
     load_translations(app)
 
@@ -46,7 +64,7 @@ def create_app():
 
     @app.context_processor
     def inject_lang():
-        return {"lang": get_language()}
+        return {"lang": get_language(), "sso_enabled": sso_enabled}
 
     return app
 
