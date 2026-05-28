@@ -15,8 +15,8 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    folders = db.relationship("Folder", backref="user", lazy=True)
-    files = db.relationship("File", backref="user", lazy=True)
+    folders = db.relationship("Folder", backref="user", lazy=True, cascade="all, delete-orphan")
+    files = db.relationship("File", backref="user", lazy=True, cascade="all, delete-orphan")
 
 
 class Folder(db.Model):
@@ -26,8 +26,8 @@ class Folder(db.Model):
     name = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    parent = db.relationship("Folder", remote_side=[id], backref="children")
-    files = db.relationship("File", backref="folder", lazy=True)
+    parent = db.relationship("Folder", remote_side=[id], backref=db.backref("children", cascade="all, delete-orphan"))
+    files = db.relationship("File", backref="folder", lazy=True, cascade="all, delete-orphan")
 
     def get_path(self):
         parts = []
@@ -52,7 +52,7 @@ class File(db.Model):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    share_links = db.relationship("ShareLink", backref="file", lazy=True)
+    share_links = db.relationship("ShareLink", backref="file", lazy=True, cascade="all, delete-orphan")
 
 
 class ShareLink(db.Model):
