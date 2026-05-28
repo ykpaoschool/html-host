@@ -253,8 +253,25 @@ def rename_folder(folder_id):
     if not new_name:
         return redirect(request.referrer or url_for("dashboard.index"))
 
+    upload_folder = current_app.config["UPLOAD_FOLDER"]
+    old_disk_dir = os.path.join(upload_folder, str(folder.user_id), folder.get_path())
+
     folder.name = new_name
+    new_disk_dir = os.path.join(upload_folder, str(folder.user_id), folder.get_path())
+
+    if os.path.isdir(old_disk_dir) and old_disk_dir != new_disk_dir:
+        os.makedirs(os.path.dirname(new_disk_dir), exist_ok=True)
+        shutil.move(old_disk_dir, new_disk_dir)
+        # Clean up empty parent dirs left behind
+        old_parent = os.path.dirname(old_disk_dir)
+        if os.path.isdir(old_parent) and not os.listdir(old_parent):
+            os.rmdir(old_parent)
+
+    removed = _sync_descendants(folder, upload_folder)
     db.session.commit()
+
+    if removed:
+        flash(t("shares_auto_removed", count=removed), "info")
 
     return redirect(
         url_for("dashboard.view_folder", folder_id=folder.id)
@@ -280,8 +297,28 @@ def move_folder(folder_id):
                 return redirect(request.referrer)
             current = current.parent
 
-    folder.parent_id = target_parent_id if target_parent_id else None
+    upload_folder = current_app.config["UPLOAD_FOLDER"]
+    old_disk_dir = os.path.join(upload_folder, str(folder.user_id), folder.get_path())
+
+    if target_parent_id:
+        folder.parent = target
+    else:
+        folder.parent = None
+    new_disk_dir = os.path.join(upload_folder, str(folder.user_id), folder.get_path())
+
+    if os.path.isdir(old_disk_dir) and old_disk_dir != new_disk_dir:
+        os.makedirs(os.path.dirname(new_disk_dir), exist_ok=True)
+        shutil.move(old_disk_dir, new_disk_dir)
+        # Clean up empty parent dirs left behind
+        old_parent = os.path.dirname(old_disk_dir)
+        if os.path.isdir(old_parent) and not os.listdir(old_parent):
+            os.rmdir(old_parent)
+
+    removed = _sync_descendants(folder, upload_folder)
     db.session.commit()
+
+    if removed:
+        flash(t("shares_auto_removed", count=removed), "info")
 
     return redirect(url_for("dashboard.view_folder", folder_id=folder.id))
 
@@ -302,6 +339,28 @@ def delete_folder(folder_id):
         if parent_id
         else url_for("dashboard.index")
     )
+
+
+def _get_all_descendant_folders(folder):
+    """Return the folder and all its descendants (depth-first)."""
+    result = []
+    for child in folder.children:
+        result.extend(_get_all_descendant_folders(child))
+    result.append(folder)
+    return result
+
+
+def _sync_descendants(folder, upload_folder):
+    """Update storage_path for all files in folder and descendants, remove broken share links.
+    Returns the number of share links removed."""
+    removed = 0
+    for f in _get_all_descendant_folders(folder):
+        for file in f.files:
+            file.storage_path = _get_storage_path(folder.user_id, file.folder, file.name)
+            for link in list(file.share_links):
+                db.session.delete(link)
+                removed += 1
+    return removed
 
 
 def _delete_folder_recursive(folder):

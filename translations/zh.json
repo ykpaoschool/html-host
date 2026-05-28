@@ -69,5 +69,9 @@
   "sso_email_conflict": "该邮箱已绑定本地账号，无法使用 SSO 登录",
   "or": "或",
   "auth_provider_local": "本地账号",
-  "auth_provider_microsoft": "Microsoft SSO"
+  "auth_provider_microsoft": "Microsoft SSO",
+  "share_file_moved": "文件已移动或删除",
+  "share_file_moved_hint": "此文件已被移动或删除，分享链接已失效。",
+  "share_not_found_hint": "此链接可能已过期或被禁用。",
+  "shares_auto_removed": "已自动删除 {count} 个分享链接"
 }
