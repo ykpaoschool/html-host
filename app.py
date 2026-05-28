@@ -138,7 +138,13 @@ def _rebuild_table(conn, db, table_name, model, nullable_cols):
             default = f" DEFAULT {col.default.arg!r}"
         nullable = "" if col.nullable else " NOT NULL"
         pk = " PRIMARY KEY" if col.primary_key else ""
-        col_defs.append(f"{col.name} {col_type}{pk}{default}{nullable}")
+        unique = " UNIQUE" if col.unique and not col.primary_key else ""
+        fk = ""
+        if col.foreign_keys:
+            fk_obj = list(col.foreign_keys)[0]
+            ref_parts = fk_obj.target_fullname.split(".")
+            fk = f" REFERENCES {ref_parts[0]}({ref_parts[-1]})"
+        col_defs.append(f"{col.name} {col_type}{pk}{default}{nullable}{unique}{fk}")
 
     col_names = ", ".join(c.name for c in model.columns)
 
