@@ -2,7 +2,7 @@ import logging
 import os
 
 from authlib.integrations.flask_client import OAuth
-from flask import Flask, redirect, url_for
+from flask import Flask, redirect, request, session, url_for
 from flask_login import LoginManager, current_user
 from sqlalchemy import inspect, text
 
@@ -41,6 +41,18 @@ def create_app():
         app.oauth = oauth
 
     load_translations(app)
+
+    @app.before_request
+    def set_language():
+        lang = request.args.get("lang")
+        if lang in app.config["LANGUAGES"]:
+            session["lang"] = lang
+
+    @app.after_request
+    def prevent_caching(response):
+        if response.content_type and "text/html" in response.content_type:
+            response.cache_control.no_store = True
+        return response
 
     app.jinja_env.filters["t"] = t_filter
     app.jinja_env.globals["get_language"] = get_language

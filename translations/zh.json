@@ -64,6 +64,10 @@
   "shared_file": "分享的文件",
   "no_share_links": "暂无分享链接",
   "login_sso_only": "此账号使用 SSO 登录，请使用对应方式登录",
+  "sso_microsoft": "使用 Microsoft 登录",
+  "sso_error": "SSO 登录失败，请稍后重试",
+  "sso_email_conflict": "该邮箱已绑定本地账号，无法使用 SSO 登录",
+  "or": "或",
   "auth_provider_local": "本地账号",
   "auth_provider_microsoft": "Microsoft SSO"
 }

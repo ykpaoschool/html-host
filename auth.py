@@ -1,3 +1,5 @@
+import logging
+
 import bcrypt
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required, login_user, logout_user
@@ -6,6 +8,8 @@ from i18n import t
 from models import User, db
 
 auth_bp = Blueprint("auth", __name__)
+
+logger = logging.getLogger(__name__)
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
@@ -84,6 +88,7 @@ def login_microsoft_callback():
         )
         userinfo = resp.json()
     except Exception:
+        logger.exception("SSO callback failed")
         flash(t("sso_error"), "error")
         return redirect(url_for("auth.login"))
 

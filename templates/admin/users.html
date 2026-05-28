@@ -45,6 +45,11 @@
                     {% if user.is_admin %}
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700">Admin</span>
                     {% endif %}
+                    {% if user.auth_provider == 'microsoft' %}
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{{ 'auth_provider_microsoft' | t }}</span>
+                    {% else %}
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-600">{{ 'auth_provider_local' | t }}</span>
+                    {% endif %}
                 </td>
                 <td class="px-6 py-4 text-sm text-gray-500">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                 <td class="px-6 py-4 text-right">

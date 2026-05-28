@@ -64,6 +64,10 @@
   "shared_file": "Shared File",
   "no_share_links": "No share links yet",
   "login_sso_only": "This account uses SSO login. Please use the appropriate method.",
+  "sso_microsoft": "Sign in with Microsoft",
+  "sso_error": "SSO login failed. Please try again later.",
+  "sso_email_conflict": "This email is already linked to a local account and cannot use SSO login.",
+  "or": "or",
   "auth_provider_local": "Local Account",
   "auth_provider_microsoft": "Microsoft SSO"
 }

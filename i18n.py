@@ -17,9 +17,6 @@ def load_translations(app):
 
 
 def get_language():
-    lang = request.args.get("lang")
-    if lang in current_app.config["LANGUAGES"]:
-        session["lang"] = lang
     return session.get("lang", current_app.config["DEFAULT_LANGUAGE"])
 
 
