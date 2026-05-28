@@ -13,3 +13,6 @@ class Config:
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     LANGUAGES = {"zh": "中文", "en": "English"}
     DEFAULT_LANGUAGE = "zh"
+    MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
+    MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
+    MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "")

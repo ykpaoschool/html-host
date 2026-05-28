@@ -1,5 +1,5 @@
 import bcrypt
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required, login_user, logout_user
 
 from i18n import t
@@ -64,6 +64,59 @@ def setup():
         return redirect(url_for("dashboard.index"))
 
     return render_template("setup.html")
+
+
+@auth_bp.route("/login/microsoft")
+def login_microsoft():
+    if not current_app.config.get("MICROSOFT_CLIENT_ID"):
+        flash(t("sso_error"), "error")
+        return redirect(url_for("auth.login"))
+    redirect_uri = url_for("auth.login_microsoft_callback", _external=True)
+    return current_app.oauth.microsoft.authorize_redirect(redirect_uri)
+
+
+@auth_bp.route("/login/microsoft/callback")
+def login_microsoft_callback():
+    try:
+        token = current_app.oauth.microsoft.authorize_access_token()
+        resp = current_app.oauth.microsoft.get(
+            "https://graph.microsoft.com/v1.0/me"
+        )
+        userinfo = resp.json()
+    except Exception:
+        flash(t("sso_error"), "error")
+        return redirect(url_for("auth.login"))
+
+    email = userinfo.get("mail") or userinfo.get("userPrincipalName", "")
+    display_name = userinfo.get("displayName", email)
+
+    if not email:
+        flash(t("sso_error"), "error")
+        return redirect(url_for("auth.login"))
+
+    email = email.strip().lower()
+
+    # Check if a local account already uses this email
+    local_user = User.query.filter_by(email=email, auth_provider="local").first()
+    if local_user:
+        flash(t("sso_email_conflict"), "error")
+        return redirect(url_for("auth.login"))
+
+    # Find or create SSO user
+    user = User.query.filter_by(email=email, auth_provider="microsoft").first()
+    if not user:
+        user = User(
+            email=email,
+            password_hash=None,
+            auth_provider="microsoft",
+            display_name=display_name,
+            is_admin=False,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    return redirect(url_for("dashboard.index"))
 
 
 @auth_bp.route("/logout")
