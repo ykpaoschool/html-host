@@ -295,6 +295,7 @@ def delete_folder(folder_id):
     parent_id = folder.parent_id
 
     _delete_folder_recursive(folder)
+    db.session.commit()
 
     return redirect(
         url_for("dashboard.view_folder", folder_id=parent_id)
@@ -313,7 +314,10 @@ def _delete_folder_recursive(folder):
         for link in file.share_links:
             db.session.delete(link)
         db.session.delete(file)
+    disk_dir = os.path.join(current_app.config["UPLOAD_FOLDER"], str(folder.user_id), folder.get_path())
     db.session.delete(folder)
+    if os.path.isdir(disk_dir) and not os.listdir(disk_dir):
+        os.rmdir(disk_dir)
 
 
 @dashboard_bp.route("/files/<int:file_id>/share", methods=["POST"])
