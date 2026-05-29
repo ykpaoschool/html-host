@@ -59,6 +59,13 @@ def _render_folder(folder):
         user_id=current_user.id, folder_id=parent_id
     ).order_by(File.name).all()
 
+    share_links = (
+        ShareLink.query.join(File)
+        .filter(File.user_id == current_user.id)
+        .order_by(ShareLink.created_at.desc())
+        .all()
+    )
+
     breadcrumbs = []
     if folder:
         current = folder
@@ -71,6 +78,7 @@ def _render_folder(folder):
         current_folder=folder,
         folders=folders,
         files=files,
+        share_links=share_links,
         breadcrumbs=breadcrumbs,
     )
 
