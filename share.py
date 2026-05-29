@@ -22,4 +22,6 @@ def view(token):
     with open(full_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    return render_template("share/view.html", file=file, content=content, link=link)
+    user = file.user
+    uploaded_by = t("share_uploaded_by", name=user.display_name)
+    return render_template("share/view.html", file=file, content=content, link=link, uploaded_by=uploaded_by)

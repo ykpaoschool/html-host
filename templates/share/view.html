@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ file.name }} - HTMLHost</title>
+    <title>HTMLHost</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -24,9 +24,7 @@
 </head>
 <body>
     <div class="toolbar">
-        <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:600;">{{ file.name }}</span>
-        </div>
+        <span>{{ uploaded_by }}</span>
         <a href="/">HTMLHost</a>
     </div>
     <iframe srcdoc="{{ content | e }}" sandbox="allow-scripts allow-same-origin"></iframe>
