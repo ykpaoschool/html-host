@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ file.name }} - HTMLHost</title>
+    <title>HTMLHost</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -19,15 +19,28 @@
         }
         .toolbar a { color: rgba(255,255,255,0.8); text-decoration: none; font-size: 12px; }
         .toolbar a:hover { color: white; }
+        .download-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .download-btn:hover { background: rgba(255,255,255,0.3); color: white; }
         iframe { flex: 1; border: none; width: 100%; }
     </style>
 </head>
 <body>
     <div class="toolbar">
-        <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:600;">{{ file.name }}</span>
+        <span>{{ uploaded_by }}</span>
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/s/{{ link.token }}/download" class="download-btn">{{ "download" | t }}</a>
+            <a href="/">HTMLHost</a>
         </div>
-        <a href="/">HTMLHost</a>
     </div>
     <iframe srcdoc="{{ content | e }}" sandbox="allow-scripts allow-same-origin"></iframe>
 </body>

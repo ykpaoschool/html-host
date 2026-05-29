@@ -73,5 +73,7 @@
   "share_file_moved": "File has been moved or deleted",
   "share_file_moved_hint": "This file has been moved or deleted, and the share link is no longer valid.",
   "share_not_found_hint": "This link may have expired or been disabled.",
-  "shares_auto_removed": "{count} share link(s) automatically removed"
+  "shares_auto_removed": "{count} share link(s) automatically removed",
+  "share_uploaded_by": "Uploaded by",
+  "download": "Download"
 }
