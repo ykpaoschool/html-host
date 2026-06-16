@@ -90,6 +90,13 @@ docker run -d \
   htmlhost
 ```
 
+Or use Docker Compose:
+
+```bash
+# Edit SECRET_KEY in docker-compose.yml first
+docker compose up -d
+```
+
 The application will be available at `http://localhost:5001`.
 
 **Data persistence:** The `/opt/htmlhost/data` directory inside the container holds both the SQLite database (`data.db`) and uploaded files (`uploads/`). Mount it as a volume to persist data across container rebuilds.
