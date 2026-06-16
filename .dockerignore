@@ -1,0 +1,12 @@
+.git
+.claude
+venv
+__pycache__
+*.pyc
+data.db
+uploads/
+.env
+*.md
+htmlhost.service
+nginx.conf
+run.sh
