@@ -1,0 +1,22 @@
+services:
+  htmlhost:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - htmlhost-data:/opt/htmlhost/data
+    environment:
+      - SECRET_KEY=replace-this-with-a-secure-secret
+      # - MICROSOFT_CLIENT_ID=
+      # - MICROSOFT_CLIENT_SECRET=
+      # - MICROSOFT_TENANT_ID=
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/login')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  htmlhost-data:
