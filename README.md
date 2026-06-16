@@ -75,6 +75,54 @@ When these are configured, a "Sign in with Microsoft" button appears on the logi
 
 ## Production Run
 
+### Option A: Docker (Recommended)
+
+Build and run with Docker:
+
+```bash
+docker build -t htmlhost .
+
+docker run -d \
+  --name htmlhost \
+  -p 5001:5001 \
+  -v htmlhost-data:/opt/htmlhost/data \
+  -e SECRET_KEY="replace-this-with-a-secure-secret" \
+  htmlhost
+```
+
+The application will be available at `http://localhost:5001`.
+
+**Data persistence:** The `/opt/htmlhost/data` directory inside the container holds both the SQLite database (`data.db`) and uploaded files (`uploads/`). Mount it as a volume to persist data across container rebuilds.
+
+**Environment variables for Docker:**
+
+| Variable | Docker Default | Description |
+| --- | --- | --- |
+| `SECRET_KEY` | *(required)* | Flask secret key — must be set in production |
+| `DATABASE_URL` | `sqlite:////opt/htmlhost/data/data.db` | SQLAlchemy database URL |
+| `UPLOAD_FOLDER` | `/opt/htmlhost/data/uploads` | Directory for uploaded files |
+| `MICROSOFT_CLIENT_ID` | `""` | Microsoft SSO OAuth client ID |
+| `MICROSOFT_CLIENT_SECRET` | `""` | Microsoft SSO OAuth client secret |
+| `MICROSOFT_TENANT_ID` | `""` | Microsoft Entra ID tenant ID |
+
+**Enable Microsoft SSO:**
+
+```bash
+docker run -d \
+  --name htmlhost \
+  -p 5001:5001 \
+  -v htmlhost-data:/opt/htmlhost/data \
+  -e SECRET_KEY="your-secret-key" \
+  -e MICROSOFT_CLIENT_ID="your-client-id" \
+  -e MICROSOFT_CLIENT_SECRET="your-client-secret" \
+  -e MICROSOFT_TENANT_ID="your-tenant-id" \
+  htmlhost
+```
+
+**Run behind a reverse proxy:** Use the `nginx.conf` in this repository as a reference. Point the upstream to `http://localhost:5001` (or the appropriate host/port if customized).
+
+### Option B: Bare Metal
+
 Run with Gunicorn:
 
 ```bash
@@ -96,13 +144,13 @@ Configuration is provided through environment variables.
 | --- | --- | --- |
 | `SECRET_KEY` | Flask secret key | `dev-secret-key-change-in-production` |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///data.db` |
+| `UPLOAD_FOLDER` | Directory for uploaded files | `uploads/` (relative to project root) |
 | `MICROSOFT_CLIENT_ID` | Microsoft SSO OAuth client ID | `""` (SSO disabled) |
 | `MICROSOFT_CLIENT_SECRET` | Microsoft SSO OAuth client secret | `""` |
 | `MICROSOFT_TENANT_ID` | Microsoft Entra ID tenant ID | `""` |
 
 Other built-in defaults:
 
-- Upload directory: `uploads/`
 - Maximum upload size: 50 MB
 - Default language: `zh`
 

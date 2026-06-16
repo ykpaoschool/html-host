@@ -9,7 +9,7 @@ class Config:
         "DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+    UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", os.path.join(BASE_DIR, "uploads"))
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     LANGUAGES = {"zh": "中文", "en": "English"}
     DEFAULT_LANGUAGE = "zh"
