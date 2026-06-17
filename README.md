@@ -65,13 +65,45 @@ On first launch, the app initializes the database automatically. The first regis
 
 Set the following environment variables to enable Microsoft Entra ID (Azure AD) single sign-on:
 
+| Variable | Description |
+| --- | --- |
+| `MICROSOFT_CLIENT_ID` | Azure AD application client ID. **When empty (the default), SSO is disabled.** |
+| `MICROSOFT_CLIENT_SECRET` | Azure AD application client secret |
+| `MICROSOFT_TENANT_ID` | Azure AD tenant ID. Use `"common"` to allow any Microsoft account (multi-tenant) |
+
+**Bare metal:**
+
 ```bash
 export MICROSOFT_CLIENT_ID="your-client-id"
 export MICROSOFT_CLIENT_SECRET="your-client-secret"
 export MICROSOFT_TENANT_ID="your-tenant-id"
 ```
 
-When these are configured, a "Sign in with Microsoft" button appears on the login page. SSO users are created automatically on first login with `is_admin=False`. If any variable is left empty (the default), SSO is disabled.
+**Docker:**
+
+```bash
+docker run -d \
+  --name htmlhost \
+  -p 5001:5001 \
+  -v htmlhost-data:/opt/htmlhost/data \
+  -e SECRET_KEY="your-secret-key" \
+  -e MICROSOFT_CLIENT_ID="your-client-id" \
+  -e MICROSOFT_CLIENT_SECRET="your-client-secret" \
+  -e MICROSOFT_TENANT_ID="your-tenant-id" \
+  htmlhost
+```
+
+**Docker Compose:** Uncomment and fill in the SSO variables in `docker-compose.yml`:
+
+```yaml
+environment:
+  - SECRET_KEY=your-secret-key
+  - MICROSOFT_CLIENT_ID=your-client-id
+  - MICROSOFT_CLIENT_SECRET=your-client-secret
+  - MICROSOFT_TENANT_ID=your-tenant-id
+```
+
+When SSO is enabled, a "Sign in with Microsoft" button appears on the login page. SSO users are created automatically on first login with `is_admin=False`. SSO users have no local password and must sign in through Microsoft. If a local account already uses the SSO user's email, that SSO login is rejected.
 
 ## Production Run
 
@@ -108,23 +140,11 @@ The application will be available at `http://localhost:5001`.
 | `SECRET_KEY` | *(required)* | Flask secret key — must be set in production |
 | `DATABASE_URL` | `sqlite:////opt/htmlhost/data/data.db` | SQLAlchemy database URL |
 | `UPLOAD_FOLDER` | `/opt/htmlhost/data/uploads` | Directory for uploaded files |
-| `MICROSOFT_CLIENT_ID` | `""` | Microsoft SSO OAuth client ID |
-| `MICROSOFT_CLIENT_SECRET` | `""` | Microsoft SSO OAuth client secret |
-| `MICROSOFT_TENANT_ID` | `""` | Microsoft Entra ID tenant ID |
+| `MICROSOFT_CLIENT_ID` | `""` | Azure AD client ID (SSO disabled when empty) |
+| `MICROSOFT_CLIENT_SECRET` | `""` | Azure AD client secret |
+| `MICROSOFT_TENANT_ID` | `""` | Azure AD tenant ID (`"common"` for multi-tenant) |
 
-**Enable Microsoft SSO:**
-
-```bash
-docker run -d \
-  --name htmlhost \
-  -p 5001:5001 \
-  -v htmlhost-data:/opt/htmlhost/data \
-  -e SECRET_KEY="your-secret-key" \
-  -e MICROSOFT_CLIENT_ID="your-client-id" \
-  -e MICROSOFT_CLIENT_SECRET="your-client-secret" \
-  -e MICROSOFT_TENANT_ID="your-tenant-id" \
-  htmlhost
-```
+**Enable Microsoft SSO:** See the [Optional) Enable Microsoft SSO](#4-optional-enable-microsoft-sso) section above for Docker and Docker Compose examples.
 
 **Run behind a reverse proxy:** Use the `nginx.conf` in this repository as a reference. Point the upstream to `http://localhost:5001` (or the appropriate host/port if customized).
 
@@ -152,9 +172,9 @@ Configuration is provided through environment variables.
 | `SECRET_KEY` | Flask secret key | `dev-secret-key-change-in-production` |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///data.db` |
 | `UPLOAD_FOLDER` | Directory for uploaded files | `uploads/` (relative to project root) |
-| `MICROSOFT_CLIENT_ID` | Microsoft SSO OAuth client ID | `""` (SSO disabled) |
-| `MICROSOFT_CLIENT_SECRET` | Microsoft SSO OAuth client secret | `""` |
-| `MICROSOFT_TENANT_ID` | Microsoft Entra ID tenant ID | `""` |
+| `MICROSOFT_CLIENT_ID` | Azure AD client ID (SSO disabled when empty) | `""` (SSO disabled) |
+| `MICROSOFT_CLIENT_SECRET` | Azure AD client secret | `""` |
+| `MICROSOFT_TENANT_ID` | Azure AD tenant ID (`"common"` for multi-tenant) | `""` |
 
 Other built-in defaults:
 
