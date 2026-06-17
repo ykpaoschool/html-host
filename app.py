@@ -5,6 +5,7 @@ from authlib.integrations.flask_client import OAuth
 from flask import Flask, redirect, request, session, url_for
 from flask_login import LoginManager, current_user
 from sqlalchemy import inspect, text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
 from i18n import get_language, load_translations, t_filter
@@ -19,6 +20,10 @@ login_manager.login_view = "auth.login"
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # Trust X-Forwarded-* headers from reverse proxy so that url_for()
+    # generates https:// URLs when behind an SSL-terminating proxy.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     db.init_app(app)
     login_manager.init_app(app)
