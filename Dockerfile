@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY app.py config.py models.py auth.py dashboard.py share.py admin.py i18n.py ./
 COPY templates/ templates/
 COPY translations/ translations/
-COPY static/ static/
+RUN mkdir -p static/css static/js
 
 # Create non-root user and data directory
 RUN groupadd -g 1000 htmlhost && \
