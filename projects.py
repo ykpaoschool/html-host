@@ -514,4 +514,7 @@ def raw_file(token, rel_path):
     if not os.path.exists(full_path):
         abort(404)
 
-    return send_file(full_path)
+    response = send_file(full_path)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
