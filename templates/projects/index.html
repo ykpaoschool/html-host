@@ -1,0 +1,374 @@
+{% extends "app_layout.html" %}
+{% block title %}{{ 'projects' | t }} - HTMLHost{% endblock %}
+{% block main %}
+<div x-data="projectManager()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">{{ 'projects' | t }}</h1>
+        <button @click="openNewProject()"
+            class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition hover:shadow-lg hover:shadow-purple-200">
+            + {{ 'new_project' | t }}
+        </button>
+    </div>
+
+    <!-- Projects list -->
+    {% if projects %}
+    <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-8">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'files' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'size' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'uploaded_at' | t }}</th>
+                    <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for project in projects %}
+                {% set ns = namespace(total=0) %}
+                {% for f in project.files %}{% set ns.total = ns.total + f.size %}{% endfor %}
+                <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                    <td class="px-6 py-4">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z"/></svg>
+                            <span class="text-sm font-medium text-gray-700">{{ project.name }}</span>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-500">{{ project.files|length }} {{ 'files' | t }}</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">{{ (ns.total / 1024) | round(1) }} KB</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            <!-- Share -->
+                            <button @click="shareProject({{ project.id }})"
+                                class="p-2 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition" title="{{ 'share' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+                            </button>
+                            <!-- Delete -->
+                            <button @click="deleteProject({{ project.id }})"
+                                class="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="{{ 'delete' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-2xl border border-gray-100 px-6 py-16 text-center mb-8">
+        <svg class="w-16 h-16 mx-auto text-gray-200 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z"/></svg>
+        <p class="text-gray-400 text-lg mb-2">{{ 'no_projects' | t }}</p>
+        <button @click="openNewProject()"
+            class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">
+            + {{ 'new_project' | t }}
+        </button>
+    </div>
+    {% endif %}
+
+    <!-- Share Links Management -->
+    {% if share_links %}
+    <div class="mt-8">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'manage_shares' | t }}</h3>
+        <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'share_link' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'expires_at' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'active' | t }}</th>
+                        <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for link in share_links %}
+                    <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                        <td class="px-6 py-3 text-sm text-gray-700">{{ link.project.name }}</td>
+                        <td class="px-6 py-3">
+                            <a href="{{ url_for('projects.view', token=link.token) }}" target="_blank"
+                                class="text-sm text-purple-600 hover:text-purple-800 transition truncate block max-w-xs">
+                                {{ url_for('projects.view', token=link.token, _external=True) }}
+                            </a>
+                        </td>
+                        <td class="px-6 py-3 text-sm text-gray-500">
+                            {{ link.expires_at.strftime('%Y-%m-%d %H:%M') if link.expires_at else ('never_expire' | t) }}
+                        </td>
+                        <td class="px-6 py-3">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                {{ 'bg-green-50 text-green-700' if link.is_active and not link.is_expired()
+                                else 'bg-red-50 text-red-700' }}">
+                                {{ ('active' | t) if link.is_active and not link.is_expired() else (('expired' | t) if link.is_expired() else ('inactive' | t)) }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-3 text-right">
+                            <form method="POST" action="{{ url_for('projects.update_share', share_id=link.id) }}" class="inline">
+                                <input type="hidden" name="action" value="toggle">
+                                <button type="submit"
+                                    class="text-xs px-2 py-1 rounded-lg {{ 'text-red-500 hover:bg-red-50' if link.is_active else 'text-green-500 hover:bg-green-50' }} transition">
+                                    {{ ('inactive' | t) if link.is_active else ('active' | t) }}
+                                </button>
+                            </form>
+                            <form method="POST" action="{{ url_for('projects.update_share', share_id=link.id) }}" class="inline"
+                                onsubmit="return confirm('{{ 'confirm_delete_file' | t }}')">
+                                <input type="hidden" name="action" value="delete">
+                                <button type="submit" class="text-xs px-2 py-1 rounded-lg text-red-500 hover:bg-red-50 transition">{{ 'delete' | t }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="mt-8">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'manage_shares' | t }}</h3>
+        <div class="bg-white rounded-2xl border border-gray-100 px-6 py-10 text-center">
+            <svg class="w-12 h-12 mx-auto text-gray-200 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+            <p class="text-gray-400">{{ 'no_share_links' | t }}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- New Project Modal -->
+    <div x-cloak x-show="showNewProject" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="closeNewProject()">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'new_project' | t }}</h3>
+
+            <!-- Name -->
+            <input type="text" x-model="projectName" required
+                class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition mb-4"
+                :placeholder="'{{ 'project_name' | t }}'">
+
+            <!-- Upload method tabs -->
+            <div class="mb-3">
+                <label class="block text-sm font-medium text-gray-700 mb-2">{{ 'upload_method' | t }}</label>
+                <div class="flex gap-2">
+                    <button type="button" @click="uploadMode = 'batch'"
+                        class="flex-1 px-3 py-2 rounded-xl text-sm font-medium transition border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        :class="uploadMode === 'batch' && 'gradient-btn text-white border-0 hover:shadow-none'">
+                        {{ 'upload_files' | t }}
+                    </button>
+                    <button type="button" @click="uploadMode = 'zip'"
+                        class="flex-1 px-3 py-2 rounded-xl text-sm font-medium transition border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        :class="uploadMode === 'zip' && 'gradient-btn text-white border-0 hover:shadow-none'">
+                        {{ 'upload_zip' | t }}
+                    </button>
+                </div>
+            </div>
+
+            <p class="text-xs text-gray-400 mb-3" x-show="uploadMode === 'batch'">{{ 'batch_upload_hint' | t }}</p>
+            <p class="text-xs text-gray-400 mb-3" x-show="uploadMode === 'zip'">{{ 'zip_upload_hint' | t }}</p>
+
+            <div class="mb-4">
+                <input type="file" multiple x-show="uploadMode === 'batch'" x-ref="batchInput"
+                    accept=".html,.htm,.css,.js,.mjs,.map,.json,.xml,.txt,.png,.jpg,.jpeg,.gif,.svg,.webp,.ico,.bmp,.woff,.woff2,.ttf,.eot,.otf,.csv,.md"
+                    class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:text-white file:gradient-btn cursor-pointer">
+                <input type="file" accept=".zip" x-show="uploadMode === 'zip'" x-ref="zipInput"
+                    class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:text-white file:gradient-btn cursor-pointer">
+            </div>
+
+            <!-- Error -->
+            <p x-show="uploadError" x-transition class="text-sm text-red-600 mb-3" x-text="uploadError"></p>
+
+            <div class="flex gap-3 justify-end">
+                <button type="button" @click="closeNewProject()"
+                    class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                <button type="button" @click="submitProject()" :disabled="uploading"
+                    class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition disabled:opacity-60"
+                    x-text="uploading ? '{{ 'uploading' | t }}' : '{{ 'create' | t }}'"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Project Modal -->
+    <div x-cloak x-show="showShare" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showShare = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ 'share_project' | t }}</h3>
+            <p class="text-sm text-gray-400 mb-4" x-text="shareProjectName"></p>
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">{{ 'expires_at' | t }}</label>
+                <div class="flex gap-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="p_expiry_type" value="never" x-model="expiryType" class="text-purple-600">
+                        <span class="text-sm text-gray-600">{{ 'never_expire' | t }}</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="p_expiry_type" value="custom" x-model="expiryType" class="text-purple-600">
+                        <span class="text-sm text-gray-600">{{ 'expires_at' | t }}</span>
+                    </label>
+                </div>
+                <input type="datetime-local" x-show="expiryType === 'custom'" x-model="expiryDate"
+                    class="mt-2 w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-purple-400 outline-none transition text-sm">
+            </div>
+
+            <div class="flex gap-3 justify-end">
+                <button @click="showShare = false"
+                    class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                <button @click="createShare()"
+                    class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'create' | t }}</button>
+            </div>
+
+            <div x-show="shareUrl" x-transition class="mt-4 p-4 bg-gray-50 rounded-xl">
+                <p class="text-xs text-gray-400 mb-2">{{ 'share_link' | t }}</p>
+                <div class="flex items-center gap-2">
+                    <input type="text" :value="shareUrl" readonly
+                        class="flex-1 px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm text-gray-700">
+                    <button @click="copyShareUrl()"
+                        class="px-3 py-2 rounded-lg gradient-btn text-white text-sm transition"
+                        x-text="copied ? '✓' : '{{ 'copy' | t }}'"></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-cloak x-show="showDelete" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showDelete = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">{{ 'delete' | t }}</h3>
+            <p class="text-sm text-gray-500 mb-4" x-text="deleteMessage"></p>
+            <form :action="'/projects/' + deleteProjectId + '/delete'" method="POST">
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showDelete = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition">{{ 'delete' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// id -> name map so project names (which may contain quotes / backslashes)
+// never get interpolated into JS string literals.
+const PROJECT_NAMES = {
+{% for p in projects %}
+    {{ p.id }}: {{ p.name | tojson }},
+{% endfor %}
+};
+
+function projectManager() {
+    return {
+        showNewProject: false,
+        showShare: false,
+        showDelete: false,
+        uploadMode: 'batch',
+        projectName: '',
+        uploading: false,
+        uploadError: '',
+        shareProjectId: null,
+        shareProjectName: '',
+        shareUrl: '',
+        copied: false,
+        expiryType: 'never',
+        expiryDate: '',
+        deleteProjectId: null,
+        deleteMessage: '',
+
+        openNewProject() {
+            this.uploadMode = 'batch';
+            this.projectName = '';
+            this.uploadError = '';
+            this.$refs.batchInput.value = '';
+            this.$refs.zipInput.value = '';
+            this.showNewProject = true;
+        },
+
+        closeNewProject() {
+            if (this.uploading) return;
+            this.showNewProject = false;
+        },
+
+        submitProject() {
+            this.uploadError = '';
+            if (!this.projectName.trim()) {
+                this.uploadError = "{{ 'project_name_required' | t }}";
+                return;
+            }
+            const formData = new FormData();
+            formData.append('name', this.projectName.trim());
+
+            let endpoint;
+            if (this.uploadMode === 'batch') {
+                const files = this.$refs.batchInput.files;
+                if (!files || !files.length) {
+                    this.uploadError = "{{ 'project_no_files' | t }}";
+                    return;
+                }
+                for (const f of files) formData.append('files', f);
+                endpoint = '/projects/upload';
+            } else {
+                const file = this.$refs.zipInput.files[0];
+                if (!file) {
+                    this.uploadError = "{{ 'project_no_files' | t }}";
+                    return;
+                }
+                formData.append('file', file);
+                endpoint = '/projects/upload-zip';
+            }
+
+            this.uploading = true;
+            fetch(endpoint, { method: 'POST', body: formData })
+                .then(async r => {
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(data.error || data.message || 'Error');
+                    return data;
+                })
+                .then(() => {
+                    this.uploading = false;
+                    window.location.reload();
+                })
+                .catch(err => {
+                    this.uploading = false;
+                    this.uploadError = err.message;
+                });
+        },
+
+        shareProject(projectId) {
+            this.shareProjectId = projectId;
+            this.shareProjectName = PROJECT_NAMES[projectId] || '';
+            this.shareUrl = '';
+            this.copied = false;
+            this.expiryType = 'never';
+            this.expiryDate = '';
+            this.showShare = true;
+        },
+
+        createShare() {
+            const formData = new FormData();
+            if (this.expiryType === 'custom' && this.expiryDate) {
+                formData.append('expires_at', new Date(this.expiryDate).toISOString());
+            }
+            fetch('/projects/' + this.shareProjectId + '/share', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) throw new Error(data.error);
+                    this.shareUrl = data.url;
+                })
+                .catch(err => {
+                    this.shareUrl = '';
+                    alert(err.message);
+                });
+        },
+
+        copyShareUrl() {
+            navigator.clipboard.writeText(this.shareUrl).then(() => {
+                this.copied = true;
+                setTimeout(() => this.copied = false, 2000);
+            });
+        },
+
+        deleteProject(projectId) {
+            this.deleteProjectId = projectId;
+            this.deleteMessage = "{{ 'confirm_delete_project' | t }}";
+            this.showDelete = true;
+        }
+    }
+}
+</script>
+{% endblock %}

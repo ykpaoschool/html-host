@@ -7,6 +7,20 @@ from sqlalchemy import UniqueConstraint
 db = SQLAlchemy()
 
 
+def _is_expired(expires_at):
+    """True if expires_at is in the past.
+
+    SQLite strips tzinfo on read, so an expiry stored as UTC-aware comes back
+    naive; coerce naive values to UTC before comparing against now(utc) to
+    avoid TypeError (which would 500 the share viewer).
+    """
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) > expires_at
+
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(256), unique=True, nullable=False)
@@ -68,9 +82,7 @@ class ShareLink(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
     def is_expired(self):
-        if self.expires_at is None:
-            return False
-        return datetime.now(timezone.utc) > self.expires_at
+        return _is_expired(self.expires_at)
 
 
 class Project(db.Model):
@@ -117,6 +129,4 @@ class ProjectShareLink(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
     def is_expired(self):
-        if self.expires_at is None:
-            return False
-        return datetime.now(timezone.utc) > self.expires_at
+        return _is_expired(self.expires_at)

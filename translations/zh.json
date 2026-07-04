@@ -88,5 +88,18 @@
   "project_upload_too_large": "上传超过 {limit}MB 限制",
   "project_upload_too_many": "上传超过 {limit} 个文件限制",
   "project_zip_invalid": "无效或损坏的 ZIP 文件",
-  "project_created": "项目已创建"
+  "project_created": "项目已创建",
+  "projects": "项目",
+  "no_projects": "暂无项目",
+  "project_files_count": "{count} 个文件",
+  "share_project": "分享项目",
+  "confirm_delete_project": "确定要删除此项目及其所有文件吗？",
+  "upload_method": "上传方式",
+  "batch_upload_hint": "选择多个 HTML/资源文件（保留目录结构）",
+  "zip_upload_hint": "上传 .zip 压缩包，将在服务端解压",
+  "select_files": "选择文件",
+  "select_zip": "选择 ZIP",
+  "uploading": "上传中...",
+  "project_no_index": "此项目没有可显示的 HTML 文件",
+  "copy": "复制"
 }

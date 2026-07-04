@@ -1,18 +1,24 @@
 import io
 import os
+import secrets
 import shutil
 import zipfile
 
 from flask import (
     Blueprint,
+    abort,
     current_app,
     jsonify,
+    redirect,
+    render_template,
     request,
+    send_file,
+    url_for,
 )
 from flask_login import current_user, login_required
 
 from i18n import t
-from models import Project, ProjectFile, db
+from models import Project, ProjectFile, ProjectShareLink, db
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -276,3 +282,236 @@ def upload_zip():
             "total_size": total,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Management routes
+# ---------------------------------------------------------------------------
+
+
+def _project_or_404(project_id):
+    """Return the current user's project or 404."""
+    return (
+        Project.query.filter_by(id=project_id, user_id=current_user.id)
+        .first_or_404()
+    )
+
+
+def _project_share_or_404(share_id):
+    """Return a ProjectShareLink owned by the current user or 404."""
+    return (
+        ProjectShareLink.query.join(Project)
+        .filter(
+            ProjectShareLink.id == share_id,
+            Project.user_id == current_user.id,
+        )
+        .first_or_404()
+    )
+
+
+def _project_disk_dir(user_id, project_id):
+    """Absolute path to a project's storage directory."""
+    return os.path.join(
+        current_app.config["UPLOAD_FOLDER"], str(user_id), "projects", str(project_id)
+    )
+
+
+@projects_bp.route("/projects")
+@login_required
+def index():
+    """List the current user's projects and their share links."""
+    projects = (
+        Project.query.filter_by(user_id=current_user.id)
+        .order_by(Project.created_at.desc())
+        .all()
+    )
+    share_links = (
+        ProjectShareLink.query.join(Project)
+        .filter(Project.user_id == current_user.id)
+        .order_by(ProjectShareLink.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "projects/index.html",
+        projects=projects,
+        share_links=share_links,
+    )
+
+
+@projects_bp.route("/projects/<int:project_id>/delete", methods=["POST"])
+@login_required
+def delete_project(project_id):
+    project = _project_or_404(project_id)
+
+    # Remove disk files first: if the commit then fails, the project row
+    # remains and the user can retry; the alternative (commit-then-rmtree)
+    # leaks an orphaned directory with no DB record pointing at it.
+    disk_dir = _project_disk_dir(current_user.id, project.id)
+    if os.path.isdir(disk_dir):
+        shutil.rmtree(disk_dir, ignore_errors=True)
+
+    # Cascade removes ProjectFile + ProjectShareLink rows.
+    db.session.delete(project)
+    db.session.commit()
+
+    return redirect(url_for("projects.index"))
+
+
+@projects_bp.route("/projects/<int:project_id>/share", methods=["POST"])
+@login_required
+def create_share(project_id):
+    """Create a ProjectShareLink. Returns JSON {url, token, id}."""
+    project = _project_or_404(project_id)
+
+    token = secrets.token_urlsafe(32)
+    expires_at = request.form.get("expires_at")
+    expires_at = _parse_expiry(expires_at)
+
+    link = ProjectShareLink(
+        project_id=project.id,
+        token=token,
+        expires_at=expires_at,
+    )
+    db.session.add(link)
+    db.session.commit()
+
+    share_url = url_for("projects.view", token=token, _external=True)
+    return jsonify({"url": share_url, "token": token, "id": link.id})
+
+
+@projects_bp.route("/projects/shares/<int:share_id>", methods=["POST"])
+@login_required
+def update_share(share_id):
+    link = _project_share_or_404(share_id)
+
+    action = request.form.get("action")
+    if action == "toggle":
+        link.is_active = not link.is_active
+    elif action == "delete":
+        db.session.delete(link)
+    elif action == "update_expiry":
+        link.expires_at = _parse_expiry(request.form.get("expires_at"))
+
+    db.session.commit()
+    return redirect(request.referrer or url_for("projects.index"))
+
+
+def _parse_expiry(raw):
+    """Parse an ISO-8601 expiry string into a UTC-aware datetime (or None).
+
+    Coerced to UTC so is_expired() (which compares against
+    datetime.now(timezone.utc)) never raises TypeError on a naive value.
+    """
+    if not raw:
+        return None
+    from datetime import datetime, timezone
+
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Public project viewer
+# ---------------------------------------------------------------------------
+
+
+def _resolve_share(token):
+    """Return the active, non-expired ProjectShareLink for token, or None."""
+    link = ProjectShareLink.query.filter_by(token=token).first()
+    if not link or not link.is_active or link.is_expired():
+        return None
+    return link
+
+
+def _find_index_file(project):
+    """Pick the entry HTML file for a project.
+
+    Preference order:
+      1. root-level index.html / index.htm
+      2. any other root-level .html/.htm (alphabetical)
+      3. shallowest .html/.htm anywhere, preferring index-named files
+    Returns a ProjectFile or None.
+    """
+    files = sorted(project.files, key=lambda f: f.path)
+    html_exts = (".html", ".htm")
+
+    root_html = [
+        f for f in files if "/" not in f.path and f.path.lower().endswith(html_exts)
+    ]
+    for f in root_html:
+        if f.path.lower() in ("index.html", "index.htm"):
+            return f
+    if root_html:
+        return root_html[0]
+
+    any_html = [f for f in files if f.path.lower().endswith(html_exts)]
+    if any_html:
+        any_html.sort(
+            key=lambda f: (
+                f.path.count("/"),
+                0 if os.path.basename(f.path).lower().split(".")[0] == "index" else 1,
+                f.path,
+            )
+        )
+        return any_html[0]
+    return None
+
+
+@projects_bp.route("/p/<token>")
+def view(token):
+    link = _resolve_share(token)
+    if not link:
+        return render_template("share/not_found.html"), 404
+
+    project = link.project
+    index_file = _find_index_file(project)
+    if index_file is None:
+        return render_template("share/not_found.html", reason="file_moved"), 404
+
+    # iframe loads the real file URL so relative links resolve correctly.
+    raw_url = url_for("projects.raw_file", token=token, rel_path=index_file.path)
+
+    uploader = project.user
+    uploaded_by = (
+        t("share_uploaded_by", name=uploader.display_name) if uploader else ""
+    )
+    return render_template(
+        "projects/view.html",
+        link=link,
+        project=project,
+        raw_url=raw_url,
+        uploaded_by=uploaded_by,
+    )
+
+
+@projects_bp.route("/p/<token>/raw/<path:rel_path>")
+def raw_file(token, rel_path):
+    """Serve a single project file by its project-relative path.
+
+    Looked up by (project_id, path) in the DB — never built from the URL —
+    so path traversal is impossible. Token must be active + unexpired.
+    """
+    link = _resolve_share(token)
+    if not link:
+        abort(404)
+
+    # Normalize the same way uploads are stored (posix, no '..').
+    norm = _normalize_rel_path(rel_path)
+    if norm is None:
+        abort(404)
+
+    project_file = (
+        ProjectFile.query.filter_by(project_id=link.project_id, path=norm).first()
+    )
+    if project_file is None:
+        abort(404)
+
+    full_path = os.path.join(
+        current_app.config["UPLOAD_FOLDER"], project_file.storage_path
+    )
+    if not os.path.exists(full_path):
+        abort(404)
+
+    return send_file(full_path)
