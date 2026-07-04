@@ -75,5 +75,18 @@
   "share_not_found_hint": "This link may have expired or been disabled.",
   "shares_auto_removed": "{count} share link(s) automatically removed",
   "share_uploaded_by": "Uploaded by",
-  "download": "Download"
+  "download": "Download",
+  "new_project": "New Project",
+  "upload_files": "Upload Files",
+  "upload_zip": "Upload ZIP",
+  "project_name": "Project Name",
+  "project_name_required": "Project name is required",
+  "project_no_files": "No files were uploaded",
+  "project_invalid_extension": "File type not allowed: {path}",
+  "project_invalid_path": "Invalid file path",
+  "project_duplicate_path": "Duplicate file path: {path}",
+  "project_upload_too_large": "Upload exceeds the {limit}MB limit",
+  "project_upload_too_many": "Upload exceeds the {limit} file limit",
+  "project_zip_invalid": "Invalid or corrupted ZIP file",
+  "project_created": "Project created"
 }

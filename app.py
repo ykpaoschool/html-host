@@ -65,11 +65,13 @@ def create_app():
 
     from auth import auth_bp
     from dashboard import dashboard_bp
+    from projects import projects_bp
     from share import share_bp
     from admin import admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(projects_bp)
     app.register_blueprint(share_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
 

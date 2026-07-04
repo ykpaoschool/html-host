@@ -75,5 +75,18 @@
   "share_not_found_hint": "此链接可能已过期或被禁用。",
   "shares_auto_removed": "已自动删除 {count} 个分享链接",
   "share_uploaded_by": "由 {name} 上传",
-  "download": "下载"
+  "download": "下载",
+  "new_project": "新建项目",
+  "upload_files": "上传文件",
+  "upload_zip": "上传 ZIP",
+  "project_name": "项目名称",
+  "project_name_required": "请填写项目名称",
+  "project_no_files": "未上传任何文件",
+  "project_invalid_extension": "不允许的文件类型：{path}",
+  "project_invalid_path": "文件路径非法",
+  "project_duplicate_path": "重复的文件路径：{path}",
+  "project_upload_too_large": "上传超过 {limit}MB 限制",
+  "project_upload_too_many": "上传超过 {limit} 个文件限制",
+  "project_zip_invalid": "无效或损坏的 ZIP 文件",
+  "project_created": "项目已创建"
 }
