@@ -74,7 +74,7 @@
   "share_file_moved_hint": "This file has been moved or deleted, and the share link is no longer valid.",
   "share_not_found_hint": "This link may have expired or been disabled.",
   "shares_auto_removed": "{count} share link(s) automatically removed",
-  "share_uploaded_by": "Uploaded by",
+  "share_uploaded_by": "Uploaded by {name}",
   "download": "Download",
   "new_project": "New Project",
   "upload_files": "Upload Files",
@@ -88,5 +88,18 @@
   "project_upload_too_large": "Upload exceeds the {limit}MB limit",
   "project_upload_too_many": "Upload exceeds the {limit} file limit",
   "project_zip_invalid": "Invalid or corrupted ZIP file",
-  "project_created": "Project created"
+  "project_created": "Project created",
+  "projects": "Projects",
+  "no_projects": "No projects yet",
+  "project_files_count": "{count} files",
+  "share_project": "Share Project",
+  "confirm_delete_project": "Are you sure you want to delete this project and all its files?",
+  "upload_method": "Upload Method",
+  "batch_upload_hint": "Select multiple HTML/asset files (directory structure preserved)",
+  "zip_upload_hint": "Upload a .zip archive; it will be extracted server-side",
+  "select_files": "Select Files",
+  "select_zip": "Select ZIP",
+  "uploading": "Uploading...",
+  "project_no_index": "This project has no HTML file to display",
+  "copy": "Copy"
 }

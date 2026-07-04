@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ project.name }} - HTMLHost</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        .toolbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .toolbar a { color: rgba(255,255,255,0.8); text-decoration: none; font-size: 12px; }
+        .toolbar a:hover { color: white; }
+        .toolbar .title { font-weight: 600; }
+        iframe { flex: 1; border: none; width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="flex items-center gap-3">
+            <span class="title">{{ project.name }}</span>
+            <span style="opacity:.8;font-size:12px;">{{ uploaded_by }}</span>
+        </div>
+        <a href="/">HTMLHost</a>
+    </div>
+    <!-- Real file URL (not srcdoc) so relative links between pages resolve. -->
+    <iframe src="{{ raw_url }}" sandbox="allow-scripts allow-same-origin"></iframe>
+</body>
+</html>
