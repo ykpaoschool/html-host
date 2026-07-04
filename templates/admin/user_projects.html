@@ -1,0 +1,70 @@
+{% extends "app_layout.html" %}
+{% block title %}{{ target_user.display_name }} - {{ 'projects' | t }}{% endblock %}
+{% block main %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-800">{{ target_user.display_name }} - {{ 'projects' | t }}</h1>
+        <p class="text-sm text-gray-400 mt-1">{{ target_user.email }}</p>
+    </div>
+    <a href="{{ url_for('admin.user_files', user_id=target_user.id) }}"
+        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">
+        {{ 'view_files' | t }}
+    </a>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+{% for category, message in messages %}
+<div class="mb-4 p-3 rounded-xl text-sm {{ 'bg-red-50 text-red-600' if category == 'error' else 'bg-green-50 text-green-600' }}">
+    {{ message }}
+</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
+
+{% if projects %}
+<div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+    <table class="w-full">
+        <thead>
+            <tr class="border-b border-gray-100">
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'files' | t }}</th>
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'size' | t }}</th>
+                <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'uploaded_at' | t }}</th>
+                <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for project in projects %}
+            {% set ns = namespace(total=0) %}
+            {% for f in project.files %}{% set ns.total = ns.total + f.size %}{% endfor %}
+            <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                <td class="px-6 py-4">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z"/></svg>
+                        <span class="text-sm font-medium text-gray-700">{{ project.name }}</span>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-500">{{ project.files|length }}</td>
+                <td class="px-6 py-4 text-sm text-gray-500">{{ (ns.total / 1024) | round(1) }} KB</td>
+                <td class="px-6 py-4 text-sm text-gray-500">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="px-6 py-4 text-right">
+                    <form method="POST" action="{{ url_for('admin.delete_project', project_id=project.id) }}" class="inline"
+                        onsubmit="return confirm('{{ 'confirm_delete_project' | t }}')">
+                        <button type="submit"
+                            class="text-xs px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 transition font-medium">
+                            {{ 'delete' | t }}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-20">
+    <p class="text-gray-400 text-lg">{{ 'no_projects' | t }}</p>
+</div>
+{% endif %}
+{% endblock %}

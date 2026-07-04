@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, flash, redirect, render_template, requ
 from flask_login import current_user, login_required
 
 from i18n import t
-from models import File, Folder, ShareLink, User, db
+from models import File, Folder, Project, ShareLink, User, db
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -115,6 +115,10 @@ def delete_user(user_id):
     folders = sorted(user.folders, key=lambda f: f.get_path().count("/"), reverse=True)
     for folder in folders:
         db.session.delete(folder)
+    # Projects cascade-delete their files + share links; the disk dir is
+    # already removed by the rmtree above, so only DB rows remain.
+    for project in list(user.projects):
+        db.session.delete(project)
     db.session.delete(user)
     db.session.commit()
 
@@ -156,3 +160,44 @@ def delete_file(file_id):
 
     flash(t("delete") + " ✓", "success")
     return redirect(url_for("admin.user_files", user_id=user_id))
+
+
+@admin_bp.route("/users/<int:user_id>/projects")
+@login_required
+@admin_required
+def user_projects(user_id):
+    user = User.query.get_or_404(user_id)
+    projects = (
+        Project.query.filter_by(user_id=user_id)
+        .order_by(Project.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "admin/user_projects.html", target_user=user, projects=projects
+    )
+
+
+@admin_bp.route("/projects/<int:project_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def delete_project(project_id):
+    project = Project.query.get_or_404(project_id)
+    user_id = project.user_id
+
+    # Remove disk files first; if the commit then fails, the row remains and
+    # the admin can retry (commit-then-rmtree would leak an orphaned dir).
+    disk_dir = os.path.join(
+        current_app.config["UPLOAD_FOLDER"],
+        str(user_id),
+        "projects",
+        str(project.id),
+    )
+    if os.path.isdir(disk_dir):
+        shutil.rmtree(disk_dir, ignore_errors=True)
+
+    # Cascade removes ProjectFile + ProjectShareLink rows.
+    db.session.delete(project)
+    db.session.commit()
+
+    flash(t("delete") + " ✓", "success")
+    return redirect(url_for("admin.user_projects", user_id=user_id))
