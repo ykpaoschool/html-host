@@ -5,10 +5,16 @@
         <h1 class="text-2xl font-bold text-gray-800">{{ target_user.display_name }} - {{ 'files' | t }}</h1>
         <p class="text-sm text-gray-400 mt-1">{{ target_user.email }}</p>
     </div>
-    <a href="{{ url_for('admin.index') }}"
-        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">
-        {{ 'back' | t }}
-    </a>
+    <div class="flex items-center gap-2">
+        <a href="{{ url_for('admin.user_projects', user_id=target_user.id) }}"
+            class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">
+            {{ 'view_projects' | t }}
+        </a>
+        <a href="{{ url_for('admin.index') }}"
+            class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">
+            {{ 'back' | t }}
+        </a>
+    </div>
 </div>
 
 <!-- Folders -->
