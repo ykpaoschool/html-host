@@ -80,6 +80,7 @@ class ShareLink(db.Model):
     expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = db.Column(db.Boolean, default=True)
+    require_login = db.Column(db.Boolean, default=False)
 
     def is_expired(self):
         return _is_expired(self.expires_at)
@@ -127,6 +128,7 @@ class ProjectShareLink(db.Model):
     expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = db.Column(db.Boolean, default=True)
+    require_login = db.Column(db.Boolean, default=False)
 
     def is_expired(self):
         return _is_expired(self.expires_at)

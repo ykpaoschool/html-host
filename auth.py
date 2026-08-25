@@ -28,7 +28,11 @@ def login():
             password.encode("utf-8"), user.password_hash.encode("utf-8")
         ):
             login_user(user)
-            next_page = request.args.get("next", url_for("dashboard.index"))
+            next_page = (
+                request.form.get("next")
+                or request.args.get("next")
+                or url_for("dashboard.index")
+            )
             return redirect(next_page)
         else:
             flash(t("login_error"), "error")

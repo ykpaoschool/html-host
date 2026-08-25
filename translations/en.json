@@ -102,5 +102,8 @@
   "select_zip": "Select ZIP",
   "uploading": "Uploading...",
   "project_no_index": "This project has no HTML file to display",
-  "copy": "Copy"
+  "copy": "Copy",
+  "access": "Access",
+  "access_anonymous": "Anyone with the link",
+  "access_login_required": "Require sign-in"
 }

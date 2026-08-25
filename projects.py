@@ -366,11 +366,13 @@ def create_share(project_id):
     token = secrets.token_urlsafe(32)
     expires_at = request.form.get("expires_at")
     expires_at = _parse_expiry(expires_at)
+    require_login = request.form.get("require_login") == "1"
 
     link = ProjectShareLink(
         project_id=project.id,
         token=token,
         expires_at=expires_at,
+        require_login=require_login,
     )
     db.session.add(link)
     db.session.commit()
@@ -465,6 +467,9 @@ def view(token):
     if not link:
         return render_template("share/not_found.html"), 404
 
+    if link.require_login and not current_user.is_authenticated:
+        return redirect(url_for("auth.login", next=request.url))
+
     project = link.project
     index_file = _find_index_file(project)
     if index_file is None:
@@ -496,6 +501,9 @@ def raw_file(token, rel_path):
     link = _resolve_share(token)
     if not link:
         abort(404)
+
+    if link.require_login and not current_user.is_authenticated:
+        abort(401)
 
     # Normalize the same way uploads are stored (posix, no '..').
     norm = _normalize_rel_path(rel_path)
