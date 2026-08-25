@@ -1,6 +1,17 @@
 import os
 
-from flask import Blueprint, current_app, make_response, render_template, send_file
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
+from flask_login import current_user
 
 from i18n import t
 from models import ShareLink
@@ -13,6 +24,9 @@ def view(token):
     link = ShareLink.query.filter_by(token=token).first()
     if not link or not link.is_active or link.is_expired():
         return render_template("share/not_found.html"), 404
+
+    if link.require_login and not current_user.is_authenticated:
+        return redirect(url_for("auth.login", next=request.url))
 
     file = link.file
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
@@ -32,6 +46,9 @@ def download(token):
     link = ShareLink.query.filter_by(token=token).first()
     if not link or not link.is_active or link.is_expired():
         return render_template("share/not_found.html"), 404
+
+    if link.require_login and not current_user.is_authenticated:
+        abort(401)
 
     file = link.file
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)

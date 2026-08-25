@@ -400,11 +400,13 @@ def create_share(file_id):
         expires_at = datetime.fromisoformat(expires_at)
     else:
         expires_at = None
+    require_login = request.form.get("require_login") == "1"
 
     link = ShareLink(
         file_id=file.id,
         token=token,
         expires_at=expires_at,
+        require_login=require_login,
     )
     db.session.add(link)
     db.session.commit()

@@ -102,5 +102,8 @@
   "select_zip": "选择 ZIP",
   "uploading": "上传中...",
   "project_no_index": "此项目没有可显示的 HTML 文件",
-  "copy": "复制"
+  "copy": "复制",
+  "access": "访问权限",
+  "access_anonymous": "任何人可访问",
+  "access_login_required": "需要登录"
 }
