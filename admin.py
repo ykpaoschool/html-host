@@ -77,6 +77,7 @@ def edit_user(user_id):
     if request.method == "POST":
         user.display_name = request.form.get("display_name", "").strip()
         user.is_admin = request.form.get("is_admin") == "on"
+        user.mcp_enabled = request.form.get("mcp_enabled") == "on"
 
         new_password = request.form.get("password", "").strip()
         if new_password and user.auth_provider == "local":
@@ -89,6 +90,20 @@ def edit_user(user_id):
         return redirect(url_for("admin.index"))
 
     return render_template("admin/edit_user.html", edit_user=user)
+
+
+@admin_bp.route("/users/<int:user_id>/toggle-mcp", methods=["POST"])
+@login_required
+@admin_required
+def toggle_mcp(user_id):
+    """Quick enable/disable of a user's API/MCP access, from the user list."""
+    user = User.query.get_or_404(user_id)
+    user.mcp_enabled = not user.mcp_enabled
+    db.session.commit()
+
+    status = t("active") if user.mcp_enabled else t("inactive")
+    flash(f"{user.display_name}: {t('mcp_enabled')} → {status}", "success")
+    return redirect(url_for("admin.index"))
 
 
 @admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
