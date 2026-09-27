@@ -26,6 +26,13 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z"/></svg>
                 {{ 'projects' | t }}
             </a>
+            <a href="{{ url_for('auth.api_tokens') }}"
+                class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition
+                {{ 'bg-purple-50 text-purple-700' if request.endpoint in ['auth.api_tokens', 'auth.create_api_token']
+                else 'text-gray-600 hover:bg-gray-50' }}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                {{ 'api_tokens' | t }}
+            </a>
             {% if current_user.is_admin %}
             <a href="{{ url_for('admin.index') }}"
                 class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition
