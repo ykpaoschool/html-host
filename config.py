@@ -16,3 +16,6 @@ class Config:
     MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
     MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
     MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "")
+    # Public base URL used when building share / login links for API responses.
+    # Fallback only: the primary source is the admin setting on /admin/mcp.
+    PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
