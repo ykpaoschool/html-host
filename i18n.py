@@ -2,6 +2,7 @@ import json
 import os
 
 from flask import current_app, request, session
+from jinja2 import pass_context
 
 
 _translations = {}
@@ -31,5 +32,10 @@ def t(key, **kwargs):
     return value
 
 
-def t_filter(key):
+@pass_context
+def t_filter(ctx, key):
+    # pass_context exists for its side effect: Jinja's optimizer constant-folds
+    # `{{ 'literal' | t }}` at compile time and bakes the translated string into
+    # the compiled template, freezing the UI language per worker process.
+    # nodes.Filter.as_const refuses to fold filters that take a context.
     return t(key)
