@@ -2,10 +2,10 @@ import logging
 
 import bcrypt
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
-from flask_login import login_required, login_user, logout_user
+from flask_login import current_user, login_required, login_user, logout_user
 
 from i18n import t
-from models import User, db
+from models import ApiToken, User, db, generate_api_token
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -133,3 +133,77 @@ def login_microsoft_callback():
 def logout():
     logout_user()
     return redirect(url_for("auth.login"))
+
+
+# --- Personal Access Tokens (API / MCP) -----------------------------------
+
+
+def _user_tokens(user_id):
+    return (
+        ApiToken.query.filter_by(user_id=user_id)
+        .order_by(ApiToken.created_at.desc())
+        .all()
+    )
+
+
+@auth_bp.route("/settings/tokens")
+@login_required
+def api_tokens():
+    return render_template(
+        "api_tokens.html", tokens=_user_tokens(current_user.id), new_token=None
+    )
+
+
+@auth_bp.route("/settings/tokens/create", methods=["POST"])
+@login_required
+def create_api_token():
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash(t("token_name_required"), "error")
+        return redirect(url_for("auth.api_tokens"))
+
+    plaintext, prefix, token_hash = generate_api_token()
+    db.session.add(
+        ApiToken(
+            user_id=current_user.id,
+            name=name,
+            token_hash=token_hash,
+            token_prefix=prefix,
+        )
+    )
+    db.session.commit()
+    logger.info(
+        "API token created: user_id=%s prefix=%s", current_user.id, prefix
+    )
+
+    # Render directly rather than redirecting: this is the one and only time the
+    # plaintext is shown, and flashing it would put the secret in the session
+    # cookie (signed, not encrypted).
+    return render_template(
+        "api_tokens.html",
+        tokens=_user_tokens(current_user.id),
+        new_token=plaintext,
+    )
+
+
+@auth_bp.route("/settings/tokens/<int:token_id>/revoke", methods=["POST"])
+@login_required
+def revoke_api_token(token_id):
+    token = ApiToken.query.filter_by(
+        id=token_id, user_id=current_user.id
+    ).first()
+    if token is None:
+        flash(t("token_not_found"), "error")
+        return redirect(url_for("auth.api_tokens"))
+
+    # Capture the prefix first: after the commit the instance is deleted, so
+    # reading an attribute from it would try to refresh a row that is gone.
+    prefix = token.token_prefix
+    db.session.delete(token)
+    db.session.commit()
+    logger.info(
+        "API token revoked: user_id=%s prefix=%s", current_user.id, prefix
+    )
+
+    flash(t("token_revoked"), "success")
+    return redirect(url_for("auth.api_tokens"))

@@ -29,6 +29,13 @@
                     <span class="text-sm font-medium text-gray-700">{{ 'is_admin' | t }}</span>
                 </label>
             </div>
+            <div class="mb-6">
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" name="mcp_enabled" {{ 'checked' if edit_user.mcp_enabled }} class="w-5 h-5 rounded text-purple-600 focus:ring-purple-400">
+                    <span class="text-sm font-medium text-gray-700">{{ 'mcp_enabled' | t }}</span>
+                </label>
+                <p class="text-xs text-gray-400 mt-2">{{ 'mcp_enabled_hint' | t }}</p>
+            </div>
             <div class="flex gap-3 justify-end">
                 <a href="{{ url_for('admin.index') }}"
                     class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</a>
