@@ -148,8 +148,9 @@ class AppSetting(db.Model):
 
     Holds deployment-level configuration that admins edit at runtime rather
     than through environment variables, so it survives restarts without a
-    redeploy. Currently ``public_base_url`` (see api.get_public_base_url) and,
-    from PR 3, the MCP shared secret.
+    redeploy. Currently ``public_base_url`` (see api.get_public_base_url) and
+    ``mcp_shared_secret_hash`` (see api.MCP_SECRET_KEY), which stores only the
+    hash - the key name says so to keep anyone from reading it as a secret.
 
     Created by db.create_all(); no migration script needed.
     """
@@ -217,3 +218,28 @@ class ApiToken(db.Model):
 
     def is_expired(self):
         return _is_expired(self.expires_at)
+
+
+# --- MCP shared secret (trusted-header auth) -------------------------------
+#
+# The secret authenticates the *gateway* (open-webui) rather than a person: it
+# is what entitles the caller to assert someone else's identity through
+# X-HtmlHost-User. Stored hashed for the same reason as PATs - it is a
+# high-entropy random string, so SHA-256 has no dictionary attack surface and
+# the comparison runs on every API call.
+#
+# The hash lives in AppSetting under api.MCP_SECRET_KEY.
+
+
+def hash_mcp_secret(plaintext):
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def generate_mcp_secret():
+    """Return (plaintext, hash) for a new shared secret.
+
+    The plaintext is only ever returned here - it is never persisted, so it can
+    be read exactly once, at generation time.
+    """
+    plaintext = secrets.token_urlsafe(32)
+    return plaintext, hash_mcp_secret(plaintext)

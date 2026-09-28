@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import shutil
 
@@ -5,10 +7,24 @@ import bcrypt
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
+# The API plane owns these settings; the page only edits them, so both sides
+# agree on one key name and one header spelling.
+from api import (
+    MCP_KEY_HEADER,
+    MCP_SECRET_KEY,
+    MCP_USER_HEADER,
+    PUBLIC_BASE_URL_KEY,
+    get_app_setting,
+    get_mcp_secret_hash,
+    get_public_base_url,
+    set_app_setting,
+)
 from i18n import t
-from models import File, Folder, Project, ShareLink, User, db
+from models import AppSetting, File, Folder, Project, ShareLink, User, db, generate_mcp_secret
 
 admin_bp = Blueprint("admin", __name__)
+
+logger = logging.getLogger(__name__)
 
 
 def admin_required(f):
@@ -216,3 +232,97 @@ def delete_project(project_id):
 
     flash(t("delete") + " ✓", "success")
     return redirect(url_for("admin.user_projects", user_id=user_id))
+
+
+# --- MCP integration (/admin/mcp) ------------------------------------------
+#
+# Two things live here, both consumed by the /api/v1 plane: the outward-facing
+# address that share links are built from (api.get_public_base_url) and the
+# shared secret that authenticates open-webui (api._resolve_trusted_header).
+
+# Placeholder for the copyable config whenever the plaintext is not in hand -
+# it is stored hashed, so it is only ever shown on the response that minted it.
+SECRET_PLACEHOLDER = "<shared-secret>"
+
+
+@admin_bp.route("/mcp")
+@login_required
+@admin_required
+def mcp_settings():
+    return _render_mcp_settings()
+
+
+@admin_bp.route("/mcp/base-url", methods=["POST"])
+@login_required
+@admin_required
+def save_mcp_base_url():
+    """Set the outward-facing address that API links are built from."""
+    # Normalise before validating: a bare "https://" would otherwise pass the
+    # scheme check and then be stored as "https:" once the trailing slash goes.
+    value = request.form.get("public_base_url", "").strip().rstrip("/")
+    if value and not value.lower().startswith("https://"):
+        flash(t("public_base_url_must_be_https"), "error")
+        return redirect(url_for("admin.mcp_settings"))
+
+    set_app_setting(PUBLIC_BASE_URL_KEY, value)
+    db.session.commit()
+    logger.info("Public base URL set to %r by user_id=%s", value, current_user.id)
+
+    flash(t("public_base_url_saved"), "success")
+    return redirect(url_for("admin.mcp_settings"))
+
+
+@admin_bp.route("/mcp/secret", methods=["POST"])
+@login_required
+@admin_required
+def rotate_mcp_secret():
+    """Generate a shared secret, replacing any existing one."""
+    plaintext, secret_hash = generate_mcp_secret()
+    set_app_setting(MCP_SECRET_KEY, secret_hash)
+    db.session.commit()
+    logger.info("MCP shared secret rotated by user_id=%s", current_user.id)
+
+    # Render directly rather than redirecting: this is the one and only time the
+    # plaintext exists, and flashing it would put the secret in the session
+    # cookie (signed, not encrypted). Same reasoning as auth.create_api_token.
+    return _render_mcp_settings(new_secret=plaintext)
+
+
+@admin_bp.route("/mcp/secret/revoke", methods=["POST"])
+@login_required
+@admin_required
+def revoke_mcp_secret():
+    row = db.session.get(AppSetting, MCP_SECRET_KEY)
+    if row is not None:
+        db.session.delete(row)
+        db.session.commit()
+        logger.info("MCP shared secret revoked by user_id=%s", current_user.id)
+
+    flash(t("mcp_secret_revoked"), "success")
+    return redirect(url_for("admin.mcp_settings"))
+
+
+def _render_mcp_settings(new_secret=None):
+    base_url = get_public_base_url()
+    secret_set = get_mcp_secret_hash() is not None
+
+    headers = {
+        MCP_KEY_HEADER: new_secret or SECRET_PLACEHOLDER,
+        # open-webui substitutes this per request; the app never sees the
+        # literal braces.
+        MCP_USER_HEADER: "{{USER_EMAIL}}",
+    }
+
+    return render_template(
+        "admin/mcp.html",
+        # What is stored vs. what is in effect: the form must show the stored
+        # value, or saving once would silently copy the env fallback into the DB.
+        stored_base_url=get_app_setting(PUBLIC_BASE_URL_KEY) or "",
+        env_base_url=current_app.config.get("PUBLIC_BASE_URL") or "",
+        mcp_url=f"{base_url}/mcp" if base_url else "",
+        secret_set=secret_set,
+        new_secret=new_secret,
+        headers_json=json.dumps(headers, indent=2),
+        enabled_user_count=User.query.filter_by(mcp_enabled=True).count(),
+        total_user_count=User.query.count(),
+    )

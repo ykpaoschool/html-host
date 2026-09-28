@@ -12,9 +12,10 @@ Auth modes (see requirements §4.1):
 Both are gated by ``User.mcp_enabled``: a single rule for the whole plane.
 
 Error contract: every failure is ``{"error": <CODE>, "message": <English>}``,
-never HTML. Codes: UNAUTHORIZED, MCP_DISABLED, NOT_FOUND, METHOD_NOT_ALLOWED,
-INVALID_REQUEST, INVALID_PATH, DUPLICATE_PATH, UNSUPPORTED_FILE_TYPE,
-INVALID_EXPIRY, PAYLOAD_TOO_LARGE, TOO_MANY_FILES, PROJECT_TOO_LARGE.
+never HTML. Codes: UNAUTHORIZED, MCP_DISABLED, USER_NOT_REGISTERED, NOT_FOUND,
+METHOD_NOT_ALLOWED, INVALID_REQUEST, INVALID_PATH, DUPLICATE_PATH,
+UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, PAYLOAD_TOO_LARGE, TOO_MANY_FILES,
+PROJECT_TOO_LARGE.
 
 Two deliberate absences: there is **no endpoint that deletes content** (files
 or projects) — MCP may only publish and revoke links — and no cross-user
@@ -22,6 +23,7 @@ access is ever reported as 403; another user's resource reads as 404 so a
 probe cannot tell "not yours" from "does not exist".
 """
 
+import hmac
 import logging
 import os
 import secrets
@@ -49,6 +51,7 @@ from models import (
     User,
     db,
     hash_api_token,
+    hash_mcp_secret,
     is_well_formed_api_token,
 )
 from projects import (
@@ -155,6 +158,12 @@ def register_json_error_handlers(app):
 # Authentication
 # ---------------------------------------------------------------------------
 
+# Trusted-header mode. Deliberately *not* Authorization: reusing it would make
+# the two modes ambiguous in _resolve_user, and open-webui sends an empty
+# "Authorization: Bearer" whenever its own token field is left blank.
+MCP_KEY_HEADER = "X-HtmlHost-Key"
+MCP_USER_HEADER = "X-HtmlHost-User"
+
 
 @api_bp.before_request
 def authenticate():
@@ -163,14 +172,39 @@ def authenticate():
 
 
 def _resolve_user(headers):
-    """Resolve the request's user, or raise ApiAuthError."""
+    """Resolve the request's user, or raise ApiAuthError.
+
+    A PAT that fails to *identify* anyone does not end the request by itself:
+    open-webui sends ``Authorization: Bearer `` with an empty token whenever its
+    own token field is left blank, and such a caller must still be able to
+    authenticate through the trusted headers. Only a 401 falls through that way
+    - a 403 means a user *was* identified and is forbidden, which is a final
+    answer regardless of what other headers are present.
+    """
+    pat_error = None
     auth_header = headers.get("Authorization", "")
     if auth_header:
-        return _resolve_pat(auth_header)
+        try:
+            return _resolve_pat(auth_header)
+        except ApiAuthError as exc:
+            if exc.status != 401:
+                raise
+            pat_error = exc
 
+    # Header values are defined to have surrounding whitespace trimmed
+    # (RFC 7230 OWS) and Werkzeug does not do it for us. A secret pasted into a
+    # gateway config with a stray space must not look like a wrong secret.
+    key = headers.get(MCP_KEY_HEADER, "").strip()
+    user_email = headers.get(MCP_USER_HEADER, "").strip()
+    if key and user_email:
+        return _resolve_trusted_header(key, user_email)
+
+    if pat_error is not None:
+        raise pat_error
     raise ApiAuthError(
         "UNAUTHORIZED",
-        "Authentication required. Send 'Authorization: Bearer <api-token>'.",
+        "Authentication required. Send 'Authorization: Bearer <api-token>', "
+        f"or the '{MCP_KEY_HEADER}' and '{MCP_USER_HEADER}' headers.",
     )
 
 
@@ -195,13 +229,7 @@ def _resolve_pat(auth_header):
     user = db.session.get(User, row.user_id)
     if user is None:
         raise ApiAuthError("UNAUTHORIZED", "Invalid or revoked API token.")
-    if not user.mcp_enabled:
-        raise ApiAuthError(
-            "MCP_DISABLED",
-            "API access is disabled for this account. "
-            "Ask an administrator to enable it.",
-            status=403,
-        )
+    _ensure_mcp_enabled(user)
 
     row.last_used_at = datetime.now(timezone.utc)
     db.session.commit()
@@ -215,11 +243,94 @@ def _resolve_pat(auth_header):
     return user
 
 
+def _resolve_trusted_header(key, user_email):
+    """Authenticate open-webui's per-user assertion (requirements §4.2).
+
+    The shared secret proves the caller is the trusted gateway; the email
+    header says which user it is acting for. open-webui injects that email
+    server-side, so a client cannot forge it - the whole mode rests on the
+    secret staying secret, which is why it is rotatable at /admin/mcp.
+    """
+    expected = get_mcp_secret_hash()
+    if expected is None:
+        raise ApiAuthError(
+            "UNAUTHORIZED",
+            "Trusted-header authentication is not configured on this server. "
+            "An administrator must generate a shared secret at /admin/mcp.",
+        )
+    # Constant-time: a timing oracle here would leak the secret one byte at a
+    # time to a caller who can measure response latency.
+    if not hmac.compare_digest(hash_mcp_secret(key), expected):
+        raise ApiAuthError("UNAUTHORIZED", "Invalid MCP shared secret.")
+
+    # Same normalisation the login paths apply (auth.py), so a gateway that
+    # sends " Alice@Corp.com " still lands on alice@corp.com.
+    email = user_email.lower()
+    user = User.query.filter_by(email=email).first()
+    if user is None:
+        # Deliberately no auto-provisioning: the secret must not double as an
+        # account-creation primitive. The login URL is the actionable next step
+        # - under SSO a single sign-in creates the account (requirements §4.4).
+        raise ApiAuthError(
+            "USER_NOT_REGISTERED",
+            f"No HTMLHost account is linked to {email}. "
+            f"Please sign in at {share_url('auth.login')} first, then retry "
+            "this request.",
+        )
+    _ensure_mcp_enabled(user)
+
+    logger.info(
+        "API auth ok: user_id=%s mode=trusted-header path=%s", user.id, request.path
+    )
+    return user
+
+
+def _ensure_mcp_enabled(user):
+    """Gate the whole API plane: one rule, checked by both auth modes."""
+    if not user.mcp_enabled:
+        raise ApiAuthError(
+            "MCP_DISABLED",
+            "API access is disabled for this account. "
+            "Ask an administrator to enable it.",
+            status=403,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Outward-facing URLs
 # ---------------------------------------------------------------------------
 
 PUBLIC_BASE_URL_KEY = "public_base_url"
+
+# AppSetting key for the hashed trusted-header shared secret. Spelled with
+# "_hash" so nobody later reads it as if it held a usable secret; the plaintext
+# exists only in the response that generated it.
+MCP_SECRET_KEY = "mcp_shared_secret_hash"
+
+
+def get_app_setting(key):
+    """Raw stored value for ``key``, or None.
+
+    Use the dedicated getter where one exists: this returns what is stored,
+    not the effective value with its fallbacks applied.
+    """
+    row = db.session.get(AppSetting, key)
+    return row.value if row is not None else None
+
+
+def set_app_setting(key, value):
+    """Upsert ``key``. The caller commits, so several settings can be one unit."""
+    row = db.session.get(AppSetting, key)
+    if row is None:
+        db.session.add(AppSetting(key=key, value=value))
+    else:
+        row.value = value
+
+
+def get_mcp_secret_hash():
+    """The stored shared-secret hash, or None when none has been generated."""
+    value = get_app_setting(MCP_SECRET_KEY)
+    return value or None
 
 
 def get_public_base_url():
@@ -228,10 +339,14 @@ def get_public_base_url():
     Priority: admin setting (AppSetting) -> PUBLIC_BASE_URL env var -> None,
     in which case callers fall back to the request's own Host.
     """
-    row = db.session.get(AppSetting, PUBLIC_BASE_URL_KEY)
-    if row and row.value:
-        return row.value.rstrip("/")
-    return current_app.config.get("PUBLIC_BASE_URL") or None
+    value = get_app_setting(PUBLIC_BASE_URL_KEY) or current_app.config.get(
+        "PUBLIC_BASE_URL"
+    )
+    if not value:
+        return None
+    # /admin/mcp already normalises on save; stripping here too keeps a
+    # hand-edited row from producing "https://host//s/<token>".
+    return value.rstrip("/")
 
 
 def share_url(endpoint, **values):
