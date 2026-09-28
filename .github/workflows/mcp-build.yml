@@ -20,15 +20,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Deliberately the same version as the main image, from the same VERSION
-      # file, so one release has one version string across both images and the
-      # MCP server reports in its handshake what its tag says. The computation
-      # below is a copy of docker-build.yml's - keep the two in step.
+      # Deliberately the same base version and commit SHA as the main image,
+      # from the same VERSION file, so one release is identifiable across both.
+      # The build number differs between the two workflows - GITHUB_RUN_NUMBER
+      # counts per workflow, and this is a newer workflow than the app's - so
+      # pair the two images of a release by SHA, not by full version string.
       #
       # Every build gets a unique, immutable full version on top of the base:
-      #   0.1.0-build.42.sha.abc1234
+      #   0.2.0-build.42.sha.abc1234
       # Separators are "-" and "." only, because a Docker tag may contain just
       # [A-Za-z0-9_.-] - semver's "+" local-version separator is not legal.
+      #
+      # The computation below is a copy of docker-build.yml's - keep the two in
+      # step.
       - name: Compute release version
         id: version
         run: |

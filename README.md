@@ -294,16 +294,16 @@ claude mcp add htmlhost \
 
 ## Versioning
 
-The `VERSION` file in the repository root is the single hand-maintained source of truth. It holds the semantic base version, bumped by hand in the pull request that warrants it:
+The `VERSION` file in the repository root is the single hand-maintained source of truth. It holds the semantic base version, bumped by hand in the pull request that warrants it — a **minor bump for a new feature** (`0.2.0`), a **patch bump for a fix or touch-up** (`0.2.1`), never automatically:
 
 ```text
-0.1.0
+0.2.0
 ```
 
 Every merge to `main` derives a unique, immutable full version on top of it (see `.github/workflows/docker-build.yml`):
 
 ```text
-0.1.0-build.42.sha.abc1234
+0.2.0-build.42.sha.abc1234
   │     │        └── short commit SHA
   │     └────────── GitHub Actions run number (monotonic)
   └──────────────── base version from VERSION
@@ -312,7 +312,7 @@ Every merge to `main` derives a unique, immutable full version on top of it (see
 That exact string is baked into the image as `APP_VERSION` **and** used as the registry tag, so the version printed in the UI is the tag you pull:
 
 ```bash
-docker pull ghcr.io/ykpaoschool/html-host:0.1.0-build.42.sha.abc1234
+docker pull ghcr.io/ykpaoschool/html-host:0.2.0-build.42.sha.abc1234
 ```
 
 Tags published per merge:
@@ -320,14 +320,17 @@ Tags published per merge:
 | Tag | Meaning |
 | --- | --- |
 | `latest` | most recent merge to `main` |
-| `0.1.0` | most recent build of base version `0.1.0` (moves on every build) |
-| `0.1.0-build.42.sha.abc1234` | that exact build, immutable — pin your deployment to this to get a real rollback target |
+| `0.2.0` | most recent build of base version `0.2.0` (moves on every build) |
+| `0.2.0-build.42.sha.abc1234` | that exact build, immutable — pin your deployment to this to get a real rollback target |
 | `sha-abc1234` | commit-addressed alias |
 
-Both images are versioned this way: the application image and the MCP server image
-(`ghcr.io/ykpaoschool/html-host-mcp`, built by `.github/workflows/mcp-build.yml`) derive the same
-string from the same `VERSION` file, so one release has one version across both. The MCP server
-reports it in its MCP handshake.
+Both images are versioned this way. The application image and the MCP server image
+(`ghcr.io/ykpaoschool/html-host-mcp`, built by `.github/workflows/mcp-build.yml`) derive from the
+same `VERSION` file and the same commit, so the **base version and the SHA** identify a release
+across both. Their `build.N` differs: `GITHUB_RUN_NUMBER` counts per workflow, so one release's two
+images read for example `0.2.0-build.16.sha.abc1234` and `0.2.0-build.1.sha.abc1234`. Pair them by
+SHA, not by full version string. Each image reports its own string — the application in the UI, the
+MCP server in its MCP handshake.
 
 To release a new version, edit `VERSION` in your branch; the next merge to `main` picks it up. A plain `docker build` (no `APP_VERSION` build arg) and the local dev server both report `<VERSION>-dev` — that suffix means "not a released build".
 

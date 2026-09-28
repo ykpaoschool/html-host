@@ -20,9 +20,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # The VERSION file holds the hand-maintained base version (e.g. "0.1.0").
+      # The VERSION file holds the hand-maintained base version (e.g. "0.2.0").
       # Every build gets a unique, immutable full version on top of it:
-      #   0.1.0-build.42.sha.abc1234
+      #   0.2.0-build.42.sha.abc1234
       # Separators are "-" and "." only, because a Docker tag may contain just
       # [A-Za-z0-9_.-] - semver's "+" local-version separator is not legal.
       - name: Compute release version
