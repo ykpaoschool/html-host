@@ -10,6 +10,9 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 - Organize files in nested folders, with rename/move sync across disk and database
 - Generate public share links with optional expiration
 - Preview shared HTML in a sandboxed iframe
+- Publish multi-file projects (HTML plus CSS, JS, images) served over real URLs
+- JSON API at `/api/v1` for scripts and CI, with personal access tokens
+- MCP server so agents can publish and manage links — see [MCP Integration](#mcp-integration)
 - Microsoft Entra ID (Azure AD) SSO login via OAuth 2.0
 - Admin panel for managing users and browsing user files
 - Automatic database schema migration on startup
@@ -190,6 +193,105 @@ export DATABASE_URL="sqlite:///data.db"
 ./run.sh prod
 ```
 
+## MCP Integration
+
+`htmlhost-mcp` is a separate MCP server that lets an agent publish HTML to HTMLHost and manage the
+links it creates. It is a stateless proxy in front of `/api/v1`: it holds no user data, parses no
+credentials, and forwards each caller's own auth headers to HTMLHost, which remains the single place
+that decides who the caller is.
+
+It supports two transports:
+
+| Transport | For | How it authenticates |
+| --- | --- | --- |
+| `streamable-http` | one shared endpoint for a whole open-webui instance | a shared secret plus the acting user's email, injected by open-webui per request |
+| `stdio` | Claude Code and other single-user agents | a personal access token of your own |
+
+The server lives in [`mcp-server/`](mcp-server/) — see its
+[README](mcp-server/README.md) for the full configuration reference and troubleshooting.
+
+### Setting it up for open-webui
+
+Requires **open-webui 0.11.4 or newer**.
+
+**1. Configure HTMLHost.** Sign in as an administrator and open **`/admin/mcp`**:
+
+- Set **Public base URL** to the address users reach HTMLHost at (`https://html.example.com`).
+  Share links are built from it, so without it the agent returns links that only work from inside
+  the server.
+- Generate a **shared secret**. It is shown once — copy it now.
+
+**2. Deploy the MCP server.** Pull the image published by CI (see `.github/workflows/mcp-build.yml`):
+
+```bash
+docker run -d --name htmlhost-mcp \
+  -p 127.0.0.1:8000:8000 \
+  -e HTMLHOST_URL=https://html.example.com \
+  -e MCP_ALLOWED_HOSTS=html.example.com \
+  --restart unless-stopped \
+  ghcr.io/ykpaoschool/html-host-mcp:latest
+```
+
+**3. Put it behind your reverse proxy** on the same domain as HTMLHost, at `/mcp`. Streamable HTTP
+is a long-lived streaming transport, so the proxy needs explicit settings — and nginx's 1 MB default
+body limit will block any publish larger than about 0.9 MB:
+
+```nginx
+location /mcp {
+    proxy_pass http://127.0.0.1:8000;   # no trailing slash: /mcp must survive
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;         # must match MCP_ALLOWED_HOSTS
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 300s;
+    client_max_body_size 10m;
+}
+```
+
+Nginx Proxy Manager has no fields for these: add `/mcp` under **Custom Locations**, then paste the
+block above into that location's **Advanced** tab. See
+[mcp-server/README.md](mcp-server/README.md#nginx-proxy-manager) for the click-by-click version.
+
+**4. Register it in open-webui** under **Settings → Admin Settings → Integrations → External Tool
+Servers → Add**:
+
+| Field | Value |
+| --- | --- |
+| Type | MCP (Streamable HTTP) |
+| URL | `https://html.example.com/mcp` |
+| Auth | None |
+| Headers | `{"X-HtmlHost-Key": "<shared secret>", "X-HtmlHost-User": "{{USER_EMAIL}}"}` |
+
+`{{USER_EMAIL}}` is substituted by open-webui server-side, so each user's work is filed under their
+own HTMLHost account with no per-user setup. A user with no HTMLHost account is refused with an
+error carrying the sign-in link — under SSO, signing in once creates the account. Accounts are never
+created implicitly. Administrators can disable any user's API access from the admin user list.
+
+### Using it from Claude Code instead
+
+No shared endpoint is needed; the client starts the process and talks over stdio:
+
+```bash
+pip install ./mcp-server     # or: uvx --from ./mcp-server htmlhost-mcp
+
+export HTMLHOST_URL=https://html.example.com
+export HTMLHOST_PAT=hh_xxxxxxxx      # Settings → API tokens
+claude mcp add htmlhost \
+  --env HTMLHOST_URL=https://html.example.com \
+  --env HTMLHOST_PAT=hh_xxxxxxxx \
+  -- htmlhost-mcp
+```
+
+### Limits and scope
+
+- One tool call carries up to **3 MiB** of content. Larger documents must be published through the
+  web UI, which accepts up to 10 MB per file; the error says so.
+- Agents can publish, update and unshare, but **cannot delete** content. Only share links can be
+  revoked, and the content behind them survives.
+- Cross-user access always answers "not found", never "forbidden", so an agent cannot probe for
+  content that exists.
+
 ## Versioning
 
 The `VERSION` file in the repository root is the single hand-maintained source of truth. It holds the semantic base version, bumped by hand in the pull request that warrants it:
@@ -222,6 +324,11 @@ Tags published per merge:
 | `0.1.0-build.42.sha.abc1234` | that exact build, immutable — pin your deployment to this to get a real rollback target |
 | `sha-abc1234` | commit-addressed alias |
 
+Both images are versioned this way: the application image and the MCP server image
+(`ghcr.io/ykpaoschool/html-host-mcp`, built by `.github/workflows/mcp-build.yml`) derive the same
+string from the same `VERSION` file, so one release has one version across both. The MCP server
+reports it in its MCP handshake.
+
 To release a new version, edit `VERSION` in your branch; the next merge to `main` picks it up. A plain `docker build` (no `APP_VERSION` build arg) and the local dev server both report `<VERSION>-dev` — that suffix means "not a released build".
 
 The version appears on the login page, so it can be checked without an account, and at the bottom of the sidebar once signed in.
@@ -235,13 +342,15 @@ The version appears on the login page, so it can be checked without an account, 
 ├── dashboard.py        # File, folder, upload, and share management
 ├── share.py            # Public shared page routes
 ├── admin.py            # Admin panel routes
-├── models.py           # SQLAlchemy models (User, Folder, File, ShareLink)
+├── api.py              # JSON API at /api/v1, with its own authentication
+├── models.py           # SQLAlchemy models (User, Folder, File, ShareLink, Project, ApiToken)
 ├── config.py           # Application configuration
 ├── i18n.py             # Translation loading and language switching
 ├── version.py          # Resolves the release version the app reports
 ├── VERSION             # Hand-maintained base version (see Versioning)
 ├── run.sh              # Dev/prod launcher script
 ├── requirements.txt    # Python dependencies
+├── mcp-server/         # MCP server package (see MCP Integration)
 ├── templates/          # Jinja2 templates
 ├── translations/       # Chinese and English translations
 ├── uploads/            # Uploaded HTML files
