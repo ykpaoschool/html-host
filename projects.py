@@ -3,6 +3,7 @@ import os
 import secrets
 import shutil
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 from flask import (
     Blueprint,
@@ -406,12 +407,34 @@ def _parse_expiry(raw):
     """
     if not raw:
         return None
-    from datetime import datetime, timezone
 
     dt = datetime.fromisoformat(raw)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+# Compact duration suffixes accepted by _parse_duration, in seconds.
+_DURATION_UNITS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_duration(raw):
+    """Parse a compact duration ('30m' / '24h' / '7d' / 'never') into a timedelta.
+
+    'never' returns None, meaning "no expiry". Raises ValueError on anything
+    unrecognised, so callers can turn a typo into a 400 rather than silently
+    minting a link that never expires.
+    """
+    value = str(raw).strip().lower()
+    if value in ("never", "none"):
+        return None
+    unit = value[-1:]
+    if unit not in _DURATION_UNITS or not value[:-1].isdigit():
+        raise ValueError(f"Unrecognised duration: {raw!r}")
+    seconds = int(value[:-1]) * _DURATION_UNITS[unit]
+    if seconds <= 0:
+        raise ValueError(f"Duration must be positive: {raw!r}")
+    return timedelta(seconds=seconds)
 
 
 # ---------------------------------------------------------------------------
