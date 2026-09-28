@@ -1,0 +1,145 @@
+{% extends "app_layout.html" %}
+{% block main %}
+<div class="max-w-4xl mx-auto">
+    <div class="flex items-center justify-between mb-2">
+        <h1 class="text-2xl font-bold text-gray-800">{{ 'mcp_config' | t }}</h1>
+        <a href="{{ url_for('admin.index') }}"
+            class="text-sm px-3 py-1.5 rounded-lg text-purple-600 hover:bg-purple-50 transition font-medium">
+            {{ 'users' | t }}
+        </a>
+    </div>
+    <p class="text-sm text-gray-500 mb-6">{{ 'mcp_config_hint' | t }}</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div class="mb-4 p-3 rounded-xl text-sm {{ 'bg-red-50 text-red-600' if category == 'error' else 'bg-green-50 text-green-600' }}">
+        {{ message }}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    {% if new_secret %}
+    <div class="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5" x-data="{ copied: false }">
+        <p class="text-sm font-semibold text-amber-800 mb-1">{{ 'mcp_secret_created_once' | t }}</p>
+        <p class="text-xs text-amber-700 mb-3">{{ 'mcp_secret_created_once_hint' | t }}</p>
+        <div class="flex items-center gap-2">
+            <code x-ref="secret" class="flex-1 min-w-0 truncate px-3 py-2 rounded-xl bg-white border border-amber-200 text-xs text-gray-700 font-mono">{{ new_secret }}</code>
+            <button type="button"
+                @click="navigator.clipboard.writeText($refs.secret.textContent.trim()).then(() => { copied = true; setTimeout(() => copied = false, 2000) })"
+                class="shrink-0 px-3 py-2 rounded-xl text-xs font-semibold text-white gradient-btn transition"
+                x-text="copied ? '{{ 'copied' | t }}' : '{{ 'copy' | t }}'">{{ 'copy' | t }}</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Outward-facing address -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <p class="text-sm font-semibold text-gray-700 mb-1">{{ 'public_base_url' | t }}</p>
+        <p class="text-xs text-gray-500 mb-3">{{ 'public_base_url_hint' | t }}</p>
+        <form method="POST" action="{{ url_for('admin.save_mcp_base_url') }}" class="flex items-end gap-3">
+            <input type="url" name="public_base_url" value="{{ stored_base_url }}"
+                placeholder="https://html.example.com"
+                class="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition">
+            <button type="submit"
+                class="shrink-0 px-4 py-3 rounded-xl text-white text-sm font-semibold gradient-btn transition whitespace-nowrap">
+                {{ 'save' | t }}
+            </button>
+        </form>
+        {% if not stored_base_url %}
+        {% if env_base_url %}
+        <p class="text-xs text-gray-500 mt-3">{{ 'public_base_url_env_hint' | t }}
+            <code class="font-mono text-gray-700">{{ env_base_url }}</code>
+        </p>
+        {% else %}
+        <p class="text-xs text-amber-600 mt-3">{{ 'public_base_url_empty_warning' | t }}</p>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <!-- Where open-webui should connect -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6 mb-6" x-data="{ copied: false }">
+        <p class="text-sm font-semibold text-gray-700 mb-1">{{ 'mcp_server_url' | t }}</p>
+        <p class="text-xs text-gray-500 mb-3">{{ 'mcp_server_url_hint' | t }}</p>
+        <div class="flex items-center gap-2">
+            <code x-ref="endpoint" class="flex-1 min-w-0 truncate px-3 py-2 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-700 font-mono">{{ mcp_url or 'https://<your-mcp-host>/mcp' }}</code>
+            <button type="button"
+                @click="navigator.clipboard.writeText($refs.endpoint.textContent.trim()).then(() => { copied = true; setTimeout(() => copied = false, 2000) })"
+                class="shrink-0 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition"
+                x-text="copied ? '{{ 'copied' | t }}' : '{{ 'copy' | t }}'">{{ 'copy' | t }}</button>
+        </div>
+        <p class="text-xs text-amber-600 mt-3">{{ 'mcp_openwebui_version' | t }}</p>
+    </div>
+
+    <!-- Shared secret -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <p class="text-sm font-semibold text-gray-700 mb-1">{{ 'mcp_shared_secret' | t }}</p>
+                <p class="text-xs text-gray-500">{{ 'mcp_shared_secret_hint' | t }}</p>
+            </div>
+            {% if secret_set %}
+            <span class="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">{{ 'mcp_secret_set' | t }}</span>
+            {% else %}
+            <span class="shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-500">{{ 'mcp_secret_not_set' | t }}</span>
+            {% endif %}
+        </div>
+        <div class="flex items-center gap-2 mt-4">
+            <form method="POST" action="{{ url_for('admin.rotate_mcp_secret') }}"
+                {% if secret_set %}onsubmit="return confirm('{{ 'mcp_secret_rotate_confirm' | t }}')"{% endif %}>
+                <button type="submit"
+                    class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">
+                    {{ ('mcp_secret_rotate' if secret_set else 'mcp_secret_generate') | t }}
+                </button>
+            </form>
+            {% if secret_set %}
+            <form method="POST" action="{{ url_for('admin.revoke_mcp_secret') }}"
+                onsubmit="return confirm('{{ 'mcp_secret_revoke_confirm' | t }}')">
+                <button type="submit"
+                    class="px-4 py-2 rounded-xl text-sm font-semibold text-red-500 border border-red-100 hover:bg-red-50 transition">
+                    {{ 'mcp_secret_revoke' | t }}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Copyable open-webui connection -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <p class="text-sm font-semibold text-gray-700 mb-1">{{ 'mcp_openwebui_config' | t }}</p>
+        <p class="text-xs text-gray-500 mb-3">{{ 'mcp_openwebui_config_hint' | t }}</p>
+        {% if not new_secret %}
+        <p class="text-xs text-amber-600 mb-3">{{ 'mcp_secret_placeholder' | t }}</p>
+        {% endif %}
+
+        <p class="text-xs font-semibold text-gray-400 uppercase mb-2">{{ 'mcp_server_url' | t }}</p>
+        <div class="relative mb-4" x-data="{ copied: false }">
+            <code x-ref="configurl" class="block px-4 py-3 pr-24 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-700 font-mono truncate">{{ mcp_url or 'https://<your-mcp-host>/mcp' }}</code>
+            <button type="button"
+                @click="navigator.clipboard.writeText($refs.configurl.textContent.trim()).then(() => { copied = true; setTimeout(() => copied = false, 2000) })"
+                class="absolute top-1/2 -translate-y-1/2 right-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition"
+                x-text="copied ? '{{ 'copied' | t }}' : '{{ 'copy' | t }}'">{{ 'copy' | t }}</button>
+        </div>
+
+        <p class="text-xs font-semibold text-gray-400 uppercase mb-2">{{ 'mcp_headers' | t }}</p>
+        <div class="relative" x-data="{ copied: false }">
+            <pre x-ref="configheaders" class="px-4 py-3 pr-24 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-700 font-mono overflow-x-auto">{{ headers_json }}</pre>
+            <button type="button"
+                @click="navigator.clipboard.writeText($refs.configheaders.textContent.trim()).then(() => { copied = true; setTimeout(() => copied = false, 2000) })"
+                class="absolute top-2 right-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition"
+                x-text="copied ? '{{ 'copied' | t }}' : '{{ 'copy' | t }}'">{{ 'copy' | t }}</button>
+        </div>
+    </div>
+
+    <!-- Who can currently use it -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6">
+        <p class="text-sm font-semibold text-gray-700 mb-1">{{ 'mcp_authorized_users' | t }}</p>
+        <p class="text-xs text-gray-500 mb-3">{{ 'mcp_authorized_users_hint' | t }}</p>
+        <p class="text-2xl font-bold text-gray-800">
+            {{ enabled_user_count }}
+            <span class="text-base font-normal text-gray-400">/ {{ total_user_count }}</span>
+        </p>
+    </div>
+</div>
+{% endblock %}
