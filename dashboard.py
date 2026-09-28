@@ -15,6 +15,7 @@ from flask_login import current_user, login_required
 
 from i18n import t
 from models import File, Folder, ShareLink, db
+from projects import _parse_expiry
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -31,6 +32,61 @@ def _ensure_upload_dir(storage_path):
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], storage_path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
+
+
+def create_file(user_id, name, content, folder_id=None):
+    """Create a File row and write its bytes to disk.
+
+    Shared by the Web UI upload handler and the JSON API so both enforce the
+    same filename rules and the same uniquifying scheme. Returns
+    ``(file, error)``: on success ``error`` is None, on failure ``file`` is
+    None and ``error`` is a human-readable message.
+
+    ``folder_id`` that does not resolve to one of the user's folders is
+    treated as "no folder" rather than an error, matching the Web UI.
+    """
+    if not name:
+        return None, "A filename is required."
+    if not name.lower().endswith(".html") and not name.lower().endswith(".htm"):
+        return None, "Only HTML files are allowed"
+
+    folder = None
+    if folder_id:
+        folder = Folder.query.filter_by(id=folder_id, user_id=user_id).first()
+
+    size = len(content)
+
+    # Generate unique filename if needed
+    base_name = name
+    counter = 1
+    existing = File.query.filter_by(
+        user_id=user_id, folder_id=folder.id if folder else None, name=base_name
+    ).first()
+    while existing:
+        name_part, ext = os.path.splitext(name)
+        base_name = f"{name_part}_{counter}{ext}"
+        counter += 1
+        existing = File.query.filter_by(
+            user_id=user_id,
+            folder_id=folder.id if folder else None,
+            name=base_name,
+        ).first()
+
+    storage_path = _get_storage_path(user_id, folder, base_name)
+    full_path = _ensure_upload_dir(storage_path)
+    with open(full_path, "wb") as f:
+        f.write(content)
+
+    file = File(
+        user_id=user_id,
+        folder_id=folder.id if folder else None,
+        name=base_name,
+        storage_path=storage_path,
+        size=size,
+    )
+    db.session.add(file)
+    db.session.commit()
+    return file, None
 
 
 @dashboard_bp.route("/")
@@ -91,57 +147,19 @@ def upload_file():
         flash(t("upload_file"), "error")
         return redirect(request.referrer or url_for("dashboard.index"))
 
-    filename = uploaded.filename
-    if not filename.lower().endswith(".html") and not filename.lower().endswith(
-        ".htm"
-    ):
-        flash("Only HTML files are allowed", "error")
+    file, error = create_file(
+        current_user.id,
+        uploaded.filename,
+        uploaded.read(),
+        request.form.get("folder_id", type=int),
+    )
+    if error:
+        flash(error, "error")
         return redirect(request.referrer or url_for("dashboard.index"))
 
-    folder_id = request.form.get("folder_id", type=int)
-    folder = None
-    if folder_id:
-        folder = Folder.query.filter_by(
-            id=folder_id, user_id=current_user.id
-        ).first()
-
-    content = uploaded.read()
-    size = len(content)
-
-    # Generate unique filename if needed
-    base_name = filename
-    counter = 1
-    existing = File.query.filter_by(
-        user_id=current_user.id, folder_id=folder.id if folder else None, name=base_name
-    ).first()
-    while existing:
-        name_part, ext = os.path.splitext(filename)
-        base_name = f"{name_part}_{counter}{ext}"
-        counter += 1
-        existing = File.query.filter_by(
-            user_id=current_user.id,
-            folder_id=folder.id if folder else None,
-            name=base_name,
-        ).first()
-
-    storage_path = _get_storage_path(current_user.id, folder, base_name)
-    full_path = _ensure_upload_dir(storage_path)
-    with open(full_path, "wb") as f:
-        f.write(content)
-
-    file = File(
-        user_id=current_user.id,
-        folder_id=folder.id if folder else None,
-        name=base_name,
-        storage_path=storage_path,
-        size=size,
-    )
-    db.session.add(file)
-    db.session.commit()
-
     return redirect(
-        url_for("dashboard.view_folder", folder_id=folder.id)
-        if folder
+        url_for("dashboard.view_folder", folder_id=file.folder_id)
+        if file.folder_id
         else url_for("dashboard.index")
     )
 
@@ -393,13 +411,7 @@ def create_share(file_id):
     file = File.query.filter_by(id=file_id, user_id=current_user.id).first_or_404()
 
     token = secrets.token_urlsafe(32)
-    expires_at = request.form.get("expires_at")
-    if expires_at:
-        from datetime import datetime
-
-        expires_at = datetime.fromisoformat(expires_at)
-    else:
-        expires_at = None
+    expires_at = _parse_expiry(request.form.get("expires_at"))
     require_login = request.form.get("require_login") == "1"
 
     link = ShareLink(
@@ -428,12 +440,7 @@ def update_share(share_id):
     elif action == "delete":
         db.session.delete(link)
     elif action == "update_expiry":
-        expires_at = request.form.get("expires_at")
-        if expires_at:
-            from datetime import datetime
-            link.expires_at = datetime.fromisoformat(expires_at)
-        else:
-            link.expires_at = None
+        link.expires_at = _parse_expiry(request.form.get("expires_at"))
 
     db.session.commit()
     return redirect(request.referrer or url_for("dashboard.index"))

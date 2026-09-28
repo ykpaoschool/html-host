@@ -143,6 +143,21 @@ class ProjectShareLink(db.Model):
         return _is_expired(self.expires_at)
 
 
+class AppSetting(db.Model):
+    """Admin-configurable key/value settings.
+
+    Holds deployment-level configuration that admins edit at runtime rather
+    than through environment variables, so it survives restarts without a
+    redeploy. Currently ``public_base_url`` (see api.get_public_base_url) and,
+    from PR 3, the MCP shared secret.
+
+    Created by db.create_all(); no migration script needed.
+    """
+
+    key = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.String(512), nullable=False)
+
+
 # --- Personal Access Tokens (API / MCP auth) -------------------------------
 #
 # Format: hh_<43-char urlsafe body>_<8-char checksum>
