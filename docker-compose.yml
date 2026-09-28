@@ -18,5 +18,41 @@ services:
       start_period: 10s
       retries: 3
 
+  # MCP endpoint for agents. Optional: without it, HTMLHost's web UI and
+  # /api/v1 work exactly as before. Production runs this the same way as the
+  # container above - see mcp-server/README.md.
+  mcp:
+    # Pull the published image, or build it locally with
+    # `docker compose build mcp`.
+    image: ghcr.io/ykpaoschool/html-host-mcp:latest
+    build: ./mcp-server
+    ports:
+      # Loopback only. The public way in is the reverse proxy, which also
+      # terminates TLS; this port is never meant to be reachable directly.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Must be the public HTTPS address, not this file's service name: the
+      # credentials forwarded here would cross the network in clear text, and
+      # the API mints share URLs from this value, so an internal name would
+      # hand users links they cannot open. Plain http:// is refused unless the
+      # address is loopback.
+      - HTMLHOST_URL=https://html.example.com
+      # Both are already the image's defaults; stated here so that what this
+      # service needs is visible without reading the Dockerfile.
+      - MCP_TRANSPORT=http
+      # 0.0.0.0, not 127.0.0.1: a container's loopback is not the host's, so a
+      # server bound to loopback is unreachable through the published port.
+      - MCP_HOST=0.0.0.0
+      # Must match the Host header the reverse proxy forwards.
+      - MCP_ALLOWED_HOSTS=html.example.com
+      # Only needed when HTMLHost's certificate comes from a private CA.
+      # - HTMLHOST_CA_BUNDLE=/etc/ssl/internal-ca.pem
+      # Only used in stdio mode. HTTP mode holds no credential of its own:
+      # callers supply one and HTMLHost decides whether to trust it.
+      # - HTMLHOST_PAT=hh_replace_me
+    # volumes:
+    #   - /etc/ssl/internal-ca.pem:/etc/ssl/internal-ca.pem:ro
+    restart: unless-stopped
+
 volumes:
   htmlhost-data:

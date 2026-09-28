@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "htmlhost-mcp"
+version = "0.1.0"
+description = "MCP server for HTMLHost: publish and share HTML from an agent."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # MCP Python SDK 2.x. FastMCP was renamed to MCPServer and moved to
+    # mcp.server.mcpserver; mcp.server.fastmcp is now a module that raises on
+    # import, so v1-era tutorials do not work here.
+    "mcp>=2.2,<3",
+    # httpx 2.x ships under the httpx2 distribution *and* import name. There is
+    # no ``httpx`` module installed alongside it (the 1.x line stops at 0.28.1),
+    # so code must import httpx2.
+    "httpx2>=2.13,<3",
+]
+
+[project.scripts]
+htmlhost-mcp = "htmlhost_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/htmlhost_mcp"]

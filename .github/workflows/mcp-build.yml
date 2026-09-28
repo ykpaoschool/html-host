@@ -1,0 +1,73 @@
+name: Build and Push MCP Server Image
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-mcp
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Deliberately the same version as the main image, from the same VERSION
+      # file, so one release has one version string across both images and the
+      # MCP server reports in its handshake what its tag says. The computation
+      # below is a copy of docker-build.yml's - keep the two in step.
+      #
+      # Every build gets a unique, immutable full version on top of the base:
+      #   0.1.0-build.42.sha.abc1234
+      # Separators are "-" and "." only, because a Docker tag may contain just
+      # [A-Za-z0-9_.-] - semver's "+" local-version separator is not legal.
+      - name: Compute release version
+        id: version
+        run: |
+          base="$(tr -d '[:space:]' < VERSION | sed 's/^v//')"
+          if [ -z "$base" ]; then
+            echo "::error::VERSION file is missing or empty"
+            exit 1
+          fi
+          short_sha="$(echo "$GITHUB_SHA" | cut -c1-7)"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "full=${base}-build.${GITHUB_RUN_NUMBER}.sha.${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.base }}
+            type=raw,value=${{ steps.version.outputs.full }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp-server
+          file: mcp-server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Stamped into the image so the version it reports in the MCP
+          # handshake matches the tag it carries.
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.full }}
