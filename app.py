@@ -88,7 +88,11 @@ def create_app():
 
     @app.context_processor
     def inject_lang():
-        return {"lang": get_language(), "sso_enabled": sso_enabled}
+        return {
+            "lang": get_language(),
+            "sso_enabled": sso_enabled,
+            "app_version": app.config["APP_VERSION"],
+        }
 
     return app
 

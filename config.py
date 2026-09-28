@@ -1,9 +1,13 @@
 import os
 
+from version import full_version
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 class Config:
+    # Release version shown in the UI; see version.py for how it is derived.
+    APP_VERSION = full_version()
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
