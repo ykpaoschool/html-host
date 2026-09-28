@@ -1,5 +1,10 @@
 FROM python:3.13-slim
 
+# Release version, injected by CI (.github/workflows/docker-build.yml) and
+# surfaced to the app as APP_VERSION. Left empty for a plain local build,
+# which version.py reads as "not a CI build" and reports as <VERSION>-dev.
+ARG APP_VERSION=""
+
 # Build-time dependencies for bcrypt and gosu (for privilege drop in entrypoint)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libffi-dev gosu && \
@@ -15,7 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy application code
-COPY app.py config.py models.py auth.py dashboard.py share.py admin.py i18n.py projects.py api.py ./
+COPY app.py config.py models.py auth.py dashboard.py share.py admin.py i18n.py projects.py api.py version.py ./
+# Hand-maintained base version, read at startup by version.py.
+COPY VERSION .
 COPY templates/ templates/
 COPY translations/ translations/
 COPY entrypoint.sh .
@@ -34,7 +41,8 @@ VOLUME /opt/htmlhost/data
 # Default env vars for container deployment
 ENV DATABASE_URL="sqlite:////opt/htmlhost/data/data.db" \
     UPLOAD_FOLDER="/opt/htmlhost/data/uploads" \
-    FLASK_ENV="production"
+    FLASK_ENV="production" \
+    APP_VERSION="${APP_VERSION}"
 
 EXPOSE 5001
 
