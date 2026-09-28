@@ -294,16 +294,16 @@ claude mcp add htmlhost \
 
 ## Versioning
 
-The `VERSION` file in the repository root is the single hand-maintained source of truth. It holds the semantic base version, bumped by hand in the pull request that warrants it:
+The `VERSION` file in the repository root is the single hand-maintained source of truth. It holds the semantic base version, bumped by hand in the pull request that warrants it — a **minor bump for a new feature** (`0.2.0`), a **patch bump for a fix or touch-up** (`0.2.1`), never automatically:
 
 ```text
-0.1.0
+0.2.0
 ```
 
 Every merge to `main` derives a unique, immutable full version on top of it (see `.github/workflows/docker-build.yml`):
 
 ```text
-0.1.0-build.42.sha.abc1234
+0.2.0-build.42.sha.abc1234
   │     │        └── short commit SHA
   │     └────────── GitHub Actions run number (monotonic)
   └──────────────── base version from VERSION
@@ -312,7 +312,7 @@ Every merge to `main` derives a unique, immutable full version on top of it (see
 That exact string is baked into the image as `APP_VERSION` **and** used as the registry tag, so the version printed in the UI is the tag you pull:
 
 ```bash
-docker pull ghcr.io/ykpaoschool/html-host:0.1.0-build.42.sha.abc1234
+docker pull ghcr.io/ykpaoschool/html-host:0.2.0-build.42.sha.abc1234
 ```
 
 Tags published per merge:
@@ -320,8 +320,8 @@ Tags published per merge:
 | Tag | Meaning |
 | --- | --- |
 | `latest` | most recent merge to `main` |
-| `0.1.0` | most recent build of base version `0.1.0` (moves on every build) |
-| `0.1.0-build.42.sha.abc1234` | that exact build, immutable — pin your deployment to this to get a real rollback target |
+| `0.2.0` | most recent build of base version `0.2.0` (moves on every build) |
+| `0.2.0-build.42.sha.abc1234` | that exact build, immutable — pin your deployment to this to get a real rollback target |
 | `sha-abc1234` | commit-addressed alias |
 
 Both images are versioned this way. The application image and the MCP server image
