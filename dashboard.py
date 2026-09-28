@@ -15,6 +15,7 @@ from flask_login import current_user, login_required
 
 from i18n import t
 from models import File, Folder, ShareLink, db
+from projects import _parse_expiry
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -410,13 +411,7 @@ def create_share(file_id):
     file = File.query.filter_by(id=file_id, user_id=current_user.id).first_or_404()
 
     token = secrets.token_urlsafe(32)
-    expires_at = request.form.get("expires_at")
-    if expires_at:
-        from datetime import datetime
-
-        expires_at = datetime.fromisoformat(expires_at)
-    else:
-        expires_at = None
+    expires_at = _parse_expiry(request.form.get("expires_at"))
     require_login = request.form.get("require_login") == "1"
 
     link = ShareLink(
@@ -445,12 +440,7 @@ def update_share(share_id):
     elif action == "delete":
         db.session.delete(link)
     elif action == "update_expiry":
-        expires_at = request.form.get("expires_at")
-        if expires_at:
-            from datetime import datetime
-            link.expires_at = datetime.fromisoformat(expires_at)
-        else:
-            link.expires_at = None
+        link.expires_at = _parse_expiry(request.form.get("expires_at"))
 
     db.session.commit()
     return redirect(request.referrer or url_for("dashboard.index"))
