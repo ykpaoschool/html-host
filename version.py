@@ -1,13 +1,14 @@
 """Release version resolution.
 
 The ``VERSION`` file in the repository root is the single hand-maintained
-source of truth: it holds the semantic base version (``0.2.0``) and is bumped
-by hand in the pull request that warrants it.
+source of truth: it holds the semantic base version, as ``MAJOR.MINOR.PATCH``,
+and is bumped by hand in the pull request that warrants it - a minor bump for a
+new feature, a patch bump for a fix.
 
 Everything else is derived. The CI workflow computes a unique, immutable
 build version for every merge to main —
 
-    0.2.0-build.42.sha.abc1234
+    X.Y.Z-build.42.sha.abc1234
 
 and injects it as the ``APP_VERSION`` environment variable (via a Docker
 build arg). That exact string is both what the UI displays and what the
@@ -30,7 +31,7 @@ DEV_SUFFIX = "-dev"
 
 
 def base_version():
-    """The semantic base version from the VERSION file (``0.2.0``)."""
+    """The semantic base version from the VERSION file (``MAJOR.MINOR.PATCH``)."""
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
             version = f.read().strip()

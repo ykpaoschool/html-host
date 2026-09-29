@@ -27,7 +27,7 @@ jobs:
       # pair the two images of a release by SHA, not by full version string.
       #
       # Every build gets a unique, immutable full version on top of the base:
-      #   0.2.0-build.42.sha.abc1234
+      #   X.Y.Z-build.42.sha.abc1234
       # Separators are "-" and "." only, because a Docker tag may contain just
       # [A-Za-z0-9_.-] - semver's "+" local-version separator is not legal.
       #
