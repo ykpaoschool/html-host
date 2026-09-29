@@ -68,17 +68,31 @@ def _is_loopback(hostname):
         return False
 
 
-def _widen(entry):
-    """Expand a bare hostname into a pattern that also matches a port.
+def _has_explicit_port(entry):
+    """Whether ``entry`` already pins a port.
 
-    The SDK compares the *whole* Host header, port included, against the
-    allowlist, so listing ``mcp.example.com`` alone rejects a request arriving
-    with ``Host: mcp.example.com:443``. Adding the SDK's ``:*`` wildcard makes
-    the entry behave the way anyone would expect it to.
+    A bracketed IPv6 literal contains colons of its own, so the presence of ":"
+    alone cannot answer this - only a colon after the closing bracket counts.
     """
-    if not entry or ":" in entry:
-        return entry
-    return f"{entry}:*"
+    if entry.startswith("["):
+        return "]:" in entry
+    return ":" in entry
+
+
+def _host_forms(entry):
+    """Every Host header value that should match ``entry``.
+
+    The SDK compares the *whole* Host header, port included, and its ``:*``
+    wildcard matches only values that actually carry a port. Both forms reach a
+    server in practice - nginx's ``$host`` has no port, ``$http_host`` does -
+    so a bare hostname has to expand to both. Expanding to ``:*`` alone looks
+    equivalent and is not: it accepts ``html.example.com:443`` while refusing
+    ``html.example.com``, which is the form a proxy actually sends, and the only
+    clue is "Invalid Host header" in the log.
+    """
+    if not entry or _has_explicit_port(entry):
+        return [entry]
+    return [entry, f"{entry}:*"]
 
 
 def _allowed_hosts(htmlhost_url):
@@ -93,12 +107,13 @@ def _allowed_hosts(htmlhost_url):
     configured = [entry.strip() for entry in _env("MCP_ALLOWED_HOSTS").split(",")]
     configured = [entry for entry in configured if entry]
     if configured:
-        return [_widen(entry) for entry in configured], "MCP_ALLOWED_HOSTS"
+        hosts = [form for entry in configured for form in _host_forms(entry)]
+        return hosts, "MCP_ALLOWED_HOSTS"
 
     hostname = urlsplit(htmlhost_url).hostname
     if not hostname:
         return [], "HTMLHOST_URL (no hostname)"
-    return [f"{hostname}:*"], f"HTMLHOST_URL hostname ({hostname})"
+    return _host_forms(hostname), f"HTMLHOST_URL hostname ({hostname})"
 
 
 @dataclass(frozen=True)
@@ -162,9 +177,11 @@ class Config:
                 "the DNS-rebinding check."
             )
         # Loopback is always allowed, so a container health check or a local
-        # probe can reach the server without knowing the public name.
+        # probe can reach the server without knowing the public name. Both
+        # forms, for the reason given on _host_forms.
+        loopback = ["127.0.0.1", "localhost", "[::1]"]
         allowed_hosts = _dedupe(
-            allowed_hosts + ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+            allowed_hosts + [form for entry in loopback for form in _host_forms(entry)]
         )
 
         if not pat and transport == STDIO:

@@ -83,10 +83,17 @@ development server can be used.
 
 `MCP_ALLOWED_HOSTS` is the DNS-rebinding allowlist. It defaults to the hostname
 of `HTMLHOST_URL`, which is right whenever the MCP endpoint is served on the
-same domain as HTMLHost — the recommended layout. A bare hostname is widened to
-`host:*` automatically, because the check compares the whole `Host` header
-including its port. Set it explicitly only when the two are on different
-domains, or when a proxy rewrites `Host`.
+same domain as HTMLHost — the recommended layout, and the only case where you
+can leave this unset. Because the check compares the whole `Host` header, port
+included, a bare hostname is expanded to both `host` and `host:*`, so it matches
+whether the proxy sends `Host: html.example.com` (nginx's `$host`) or
+`Host: html.example.com:443` (`$http_host`). Set it explicitly only when the two
+are on different domains, or when a proxy rewrites `Host`. Whatever you set, the
+effective list is printed at startup:
+
+```
+allowed Host headers: html.example.com, html.example.com:*, 127.0.0.1, ...
+```
 
 ## Serving over HTTP
 
