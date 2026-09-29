@@ -205,6 +205,43 @@ log. Every example above sets `client_max_body_size 10m`; if you use a different
 proxy, find its equivalent. This is the single most likely reason a publish
 fails for no visible reason.
 
+### Checking the endpoint works
+
+The handshake is plain JSON-RPC, so one `curl` covers the whole path — DNS, TLS,
+proxy, this server — with no MCP client involved:
+
+```bash
+curl -sS -i --max-time 10 -X POST https://html.example.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
+```
+
+A healthy endpoint answers `200` with an event stream: `event: message`, then
+`data: {...}` naming this server and its version. That SSE framing is the
+transport, not a symptom. Both `Accept` types are required — `application/json`
+alone is answered `406`.
+
+Authentication belongs to HTMLHost, so this call needs none of it: `initialize`
+never reaches the API. To exercise the credentials too, keep the headers from
+[Registering it in open-webui](#registering-it-in-open-webui) and ask a tool
+instead of handshaking — `whoami` is the cheapest one, and it reports the
+HTMLHost account the request acts as:
+
+```bash
+curl -sS --max-time 15 -X POST https://html.example.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-HtmlHost-Key: <shared secret>' \
+  -H 'X-HtmlHost-User: alice@example.com' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+```
+
+An authentication failure comes back *in the body*, not as an HTTP status: MCP
+reports a tool error inside a `200` response. What it carries is HTMLHost's own
+wording — `UNAUTHORIZED`, `MCP_DISABLED`, or `USER_NOT_REGISTERED` with its
+sign-in link — so read the payload rather than the status code.
+
 ## Registering it in open-webui
 
 Requires **open-webui 0.11.4 or newer** (`{{USER_EMAIL}}` in a tool server's
