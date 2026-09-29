@@ -219,8 +219,9 @@ curl -sS -i --max-time 10 -X POST https://html.example.com/mcp \
 
 A healthy endpoint answers `200` with an event stream: `event: message`, then
 `data: {...}` naming this server and its version. That SSE framing is the
-transport, not a symptom. Both `Accept` types are required — `application/json`
-alone is answered `406`.
+transport, not a symptom. Ask for both `Accept` types, as an MCP client does —
+though `application/json` alone is answered `200` as well, so this header is
+rarely the thing that is wrong.
 
 Authentication belongs to HTMLHost, so this call needs none of it: `initialize`
 never reaches the API. To exercise the credentials too, keep the headers from
