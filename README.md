@@ -249,8 +249,11 @@ location /mcp {
 }
 ```
 
-Nginx Proxy Manager has no fields for these: add `/mcp` under **Custom Locations**, then paste the
-block above into that location's **Advanced** tab. See
+Nginx Proxy Manager has no fields for these: add `/mcp` under **Custom Locations** and paste the
+block above into that location's **Advanced** tab, **minus the `proxy_set_header Host` line** — NPM
+writes that header (and the `X-Forwarded-*` ones) into every custom location itself, and nginx
+appends a repeated header rather than overriding it, so a second copy sends two `Host` headers and
+every request is answered `400 Invalid HTTP request received.` See
 [mcp-server/README.md](mcp-server/README.md#nginx-proxy-manager) for the click-by-click version.
 
 **4. Register it in open-webui** under **Settings → Admin Settings → Integrations → External Tool
