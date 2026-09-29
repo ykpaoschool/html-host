@@ -150,6 +150,9 @@ location /mcp {
 }
 ```
 
+The `Host` line is required here. In Nginx Proxy Manager it is not — that block
+is written for you, and adding a second copy breaks every request; see below.
+
 The trailing slash in `proxy_pass` matters: `proxy_pass http://127.0.0.1:8000/;`
 strips `/mcp` and this server then answers 404 to every request.
 
@@ -168,12 +171,25 @@ by hand.
    ```nginx
    proxy_http_version 1.1;
    proxy_set_header Connection "";
-   proxy_set_header Host $host;
    proxy_buffering off;
    proxy_cache off;
    proxy_read_timeout 300s;
    client_max_body_size 10m;
    ```
+
+   **Nothing that NPM already writes for this location belongs here**, and that
+   includes `proxy_set_header Host $host;`. It is the one line people copy over
+   from the nginx snippet above, and it is the one line that breaks the
+   deployment: nginx **appends** a repeated header instead of overriding it, so
+   the request leaves with two `Host` headers, and uvicorn rejects it with `400`
+   and the body `Invalid HTTP request received.` — for every request, `GET`
+   included, before any MCP code runs. RFC 7230 §5.4 requires a server to reject
+   a request carrying more than one `Host` field, so this server is behaving
+   correctly; the proxy is sending an ambiguous request.
+
+   The symptom is easy to misread, because HTMLHost's own pages on the same
+   domain keep working (their location sets `Host` once): it looks like an MCP
+   fault, and nothing appears in HTMLHost's log.
 
 3. **Save.** NPM reloads nginx itself.
 
@@ -188,6 +204,44 @@ roughly 0.9 MB gets an opaque 413 from the proxy and nothing in this server's
 log. Every example above sets `client_max_body_size 10m`; if you use a different
 proxy, find its equivalent. This is the single most likely reason a publish
 fails for no visible reason.
+
+### Checking the endpoint works
+
+The handshake is plain JSON-RPC, so one `curl` covers the whole path — DNS, TLS,
+proxy, this server — with no MCP client involved:
+
+```bash
+curl -sS -i --max-time 10 -X POST https://html.example.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
+```
+
+A healthy endpoint answers `200` with an event stream: `event: message`, then
+`data: {...}` naming this server and its version. That SSE framing is the
+transport, not a symptom. Ask for both `Accept` types, as an MCP client does —
+though `application/json` alone is answered `200` as well, so this header is
+rarely the thing that is wrong.
+
+Authentication belongs to HTMLHost, so this call needs none of it: `initialize`
+never reaches the API. To exercise the credentials too, keep the headers from
+[Registering it in open-webui](#registering-it-in-open-webui) and ask a tool
+instead of handshaking — `whoami` is the cheapest one, and it reports the
+HTMLHost account the request acts as:
+
+```bash
+curl -sS --max-time 15 -X POST https://html.example.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-HtmlHost-Key: <shared secret>' \
+  -H 'X-HtmlHost-User: alice@example.com' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+```
+
+An authentication failure comes back *in the body*, not as an HTTP status: MCP
+reports a tool error inside a `200` response. What it carries is HTMLHost's own
+wording — `UNAUTHORIZED`, `MCP_DISABLED`, or `USER_NOT_REGISTERED` with its
+sign-in link — so read the payload rather than the status code.
 
 ## Registering it in open-webui
 
@@ -226,14 +280,37 @@ sign-in creates the account. Accounts are never created implicitly by this path.
 | Symptom | Cause |
 |---|---|
 | Publish fails with an opaque 413; nothing in the container log | The proxy's body limit. Set `client_max_body_size` (nginx default is 1 MB). |
-| Every request refused; log says `Invalid Host header` | The `Host` header does not match `MCP_ALLOWED_HOSTS`. Check what the proxy sends and compare with the startup log line listing the accepted values. |
+| Every request answered `400`, body plain text `Invalid HTTP request received.` | The bytes are malformed before any MCP code runs — look for a **duplicated `Host` header** first; see Nginx Proxy Manager above. The same line is in this container's log, once per bad request, and nothing reaches HTMLHost. |
+| Every request refused; this container's log says `Invalid Host header` | The `Host` header does not match `MCP_ALLOWED_HOSTS`. This server answers `421` in that case. Compare what the proxy sends with the startup log line listing the accepted values. |
 | 502 from the proxy | `MCP_HOST` is not `0.0.0.0` inside the container, or the proxy is looking at the wrong port. |
 | Call connects, then hangs or drops at random | Proxy buffering or read timeout. `proxy_buffering off`, `proxy_read_timeout 300s`. |
+| `curl` on the published port answers with something that is not JSON-RPC, `{"detail":"Not Found"}` for instance | You reached a different service. `docker ps` shows this container as `8000/tcp` with no `->`, meaning it publishes nothing to the host: the host's port 8000 belongs to something else. Test through the domain, or publish a port on this container. |
 | `UPSTREAM_UNREACHABLE` | `HTMLHOST_URL` is wrong, or its certificate is from a private CA and `HTMLHOST_CA_BUNDLE` is unset. |
 | `HTTP_502` whose message says the body was not JSON | Something between this server and HTMLHost answered instead — a proxy error page, a VPN portal, an SSO intercept. |
 | `UNAUTHORIZED` in stdio mode | `HTMLHOST_PAT` is unset; stdio has no headers to forward. |
 | `USER_NOT_REGISTERED` | The acting user has no HTMLHost account yet. The message carries the sign-in link; relay it. |
 | `PAYLOAD_TOO_LARGE` | Content over 3 MiB in one call. Publish it through the HTMLHost web UI instead, which accepts up to 10 MB per file. |
+
+When a failure happens inside the transport — a `400` with a plain-text body, a
+hang, a 413 — the bytes the proxy actually sends are worth more than any log
+line, and they are not hidden. Two containers on one Docker network talk through
+the host's bridge, so the host sees their plaintext:
+
+```bash
+# one terminal: dump what this container receives
+sudo tcpdump -i any -A -s 0 \
+  "host $(sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' htmlhost-mcp) and tcp port 8000"
+# another: reproduce the failure against the public URL
+curl -sS -i --max-time 10 -X POST https://html.example.com/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
+```
+
+A doubled `Host`, a lost request body, an unexpected `Content-Length`: all of it
+is legible there. This container's log is less help than it looks — it writes one
+identical line per malformed request and that line carries no timestamp, so
+`docker logs --tail N` cannot tell you whether a new failure just arrived. Use
+`--since`, or compare line counts.
 
 Browser-based MCP clients are not supported: the DNS-rebinding check rejects a
 request that carries an `Origin` header, and no browser client sends an email
