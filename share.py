@@ -26,7 +26,9 @@ def view(token):
         return render_template("share/not_found.html"), 404
 
     if link.require_login and not current_user.is_authenticated:
-        return redirect(url_for("auth.login", next=request.url))
+        # Relative path, not request.url: auth._safe_next_url rejects
+        # absolute URLs, which is what request.url would hand it.
+        return redirect(url_for("auth.login", next=request.path))
 
     file = link.file
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
