@@ -5,6 +5,18 @@ from version import full_version
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
+# Secret keys that must never reach a real deployment: the built-in dev
+# default and the docker-compose.yml placeholder. create_app() refuses to
+# start with any of them (or an empty value) - a known key makes the signed
+# session cookie forgeable, i.e. a full authentication bypass.
+INSECURE_SECRET_KEYS = frozenset(
+    {
+        "dev-secret-key-change-in-production",
+        "replace-this-with-a-secure-secret",
+    }
+)
+
+
 class Config:
     # Release version shown in the UI; see version.py for how it is derived.
     APP_VERSION = full_version()

@@ -122,15 +122,16 @@ docker run -d \
   --name htmlhost \
   -p 5001:5001 \
   -v htmlhost-data:/opt/htmlhost/data \
-  -e SECRET_KEY="replace-this-with-a-secure-secret" \
+  -e SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
   htmlhost
 ```
 
 Or use Docker Compose:
 
 ```bash
-# Edit SECRET_KEY in docker-compose.yml first
-docker compose up -d
+# SECRET_KEY is read from the shell or an .env file next to docker-compose.yml;
+# compose refuses to start without it, and so does the app itself.
+SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" docker compose up -d
 ```
 
 The application will be available at `http://localhost:5001`.
@@ -141,7 +142,7 @@ The application will be available at `http://localhost:5001`.
 
 | Variable | Docker Default | Description |
 | --- | --- | --- |
-| `SECRET_KEY` | *(required)* | Flask secret key — must be set in production |
+| `SECRET_KEY` | *(required)* | Flask secret key — the app refuses to start without a real value |
 | `DATABASE_URL` | `sqlite:////opt/htmlhost/data/data.db` | SQLAlchemy database URL |
 | `UPLOAD_FOLDER` | `/opt/htmlhost/data/uploads` | Directory for uploaded files |
 | `MICROSOFT_CLIENT_ID` | `""` | Azure AD client ID (SSO disabled when empty) |
@@ -173,7 +174,7 @@ Configuration is provided through environment variables.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `SECRET_KEY` | Flask secret key | `dev-secret-key-change-in-production` |
+| `SECRET_KEY` | Flask secret key | *(refuses to start on the dev default or the compose placeholder)* |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///data.db` |
 | `UPLOAD_FOLDER` | Directory for uploaded files | `uploads/` (relative to project root) |
 | `MICROSOFT_CLIENT_ID` | Azure AD client ID (SSO disabled when empty) | `""` (SSO disabled) |
@@ -188,7 +189,7 @@ Other built-in defaults:
 Example:
 
 ```bash
-export SECRET_KEY="replace-this-in-production"
+export SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 export DATABASE_URL="sqlite:///data.db"
 ./run.sh prod
 ```

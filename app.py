@@ -7,7 +7,7 @@ from flask_login import LoginManager, current_user
 from sqlalchemy import inspect, text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from config import Config
+from config import INSECURE_SECRET_KEYS, Config
 from i18n import get_language, load_translations, t_filter
 from models import User, db
 
@@ -20,6 +20,19 @@ login_manager.login_view = "auth.login"
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # A known/default SECRET_KEY makes the signed session cookie forgeable
+    # (anyone can mint a valid admin session), so refuse to run at all.
+    if (
+        not app.config["SECRET_KEY"]
+        or app.config["SECRET_KEY"] in INSECURE_SECRET_KEYS
+    ):
+        raise RuntimeError(
+            "SECRET_KEY is missing or still a known default; refusing to start. "
+            "Generate one, e.g. python3 -c 'import secrets; "
+            "print(secrets.token_hex(32))', and pass it as the SECRET_KEY "
+            "environment variable."
+        )
 
     # Trust X-Forwarded-* headers from reverse proxy so that url_for()
     # generates https:// URLs when behind an SSL-terminating proxy.
