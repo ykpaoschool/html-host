@@ -20,6 +20,24 @@ from projects import _parse_expiry
 dashboard_bp = Blueprint("dashboard", __name__)
 
 
+def _is_valid_component_name(name):
+    """True if name is safe to use as a single path segment on disk.
+
+    File and folder names are joined into storage paths without further
+    normalization (see _get_storage_path and Folder.get_path), so a name
+    containing a separator or a '..' segment would traverse outside the
+    user's upload directory - e.g. an upload named
+    '../../../templates/base.html' could overwrite an application template.
+    Unlike werkzeug's secure_filename this only rejects, never rewrites, so
+    non-ASCII (e.g. Chinese) filenames keep working.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if any(ch in name for ch in ("/", "\\", "\x00")):
+        return False
+    return True
+
+
 def _get_storage_path(user_id, folder, filename):
     parts = [str(user_id)]
     if folder:
@@ -47,6 +65,8 @@ def create_file(user_id, name, content, folder_id=None):
     """
     if not name:
         return None, "A filename is required."
+    if not _is_valid_component_name(name):
+        return None, "Filenames may not contain '/', '\\' or '..'."
     if not name.lower().endswith(".html") and not name.lower().endswith(".htm"):
         return None, "Only HTML files are allowed"
 
@@ -171,6 +191,9 @@ def rename_file(file_id):
     new_name = request.form.get("name", "").strip()
     if not new_name:
         return redirect(request.referrer or url_for("dashboard.index"))
+    if not _is_valid_component_name(new_name):
+        flash("Filenames may not contain '/', '\\' or '..'.", "error")
+        return redirect(request.referrer or url_for("dashboard.index"))
 
     # Rename on filesystem
     old_full = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
@@ -253,6 +276,16 @@ def create_folder():
 
     if not name:
         return redirect(request.referrer or url_for("dashboard.index"))
+    if not _is_valid_component_name(name):
+        flash("Folder names may not contain '/', '\\' or '..'.", "error")
+        return redirect(request.referrer or url_for("dashboard.index"))
+
+    # Only accept a parent folder owned by the caller; a foreign id would
+    # nest this folder into another user's tree.
+    if parent_id and not Folder.query.filter_by(
+        id=parent_id, user_id=current_user.id
+    ).first():
+        parent_id = None
 
     folder = Folder(
         user_id=current_user.id,
@@ -277,6 +310,9 @@ def rename_folder(folder_id):
     ).first_or_404()
     new_name = request.form.get("name", "").strip()
     if not new_name:
+        return redirect(request.referrer or url_for("dashboard.index"))
+    if not _is_valid_component_name(new_name):
+        flash("Folder names may not contain '/', '\\' or '..'.", "error")
         return redirect(request.referrer or url_for("dashboard.index"))
 
     upload_folder = current_app.config["UPLOAD_FOLDER"]
@@ -314,9 +350,14 @@ def move_folder(folder_id):
     if target_parent_id == folder.id:
         return redirect(request.referrer)
 
-    # Check for circular reference
+    # Check for circular reference; the parent must also be one of the
+    # caller's own folders, or the move would nest into another user's tree.
     if target_parent_id:
-        target = Folder.query.get(target_parent_id)
+        target = Folder.query.filter_by(
+            id=target_parent_id, user_id=current_user.id
+        ).first()
+        if not target:
+            return redirect(request.referrer or url_for("dashboard.index"))
         current = target
         while current:
             if current.id == folder.id:
