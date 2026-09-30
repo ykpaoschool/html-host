@@ -38,10 +38,13 @@ RUN groupadd -g 1000 htmlhost && \
 # Data volume mount point
 VOLUME /opt/htmlhost/data
 
-# Default env vars for container deployment
+# Default env vars for container deployment. The container is expected to
+# sit behind a TLS-terminating proxy, so session cookies are marked Secure
+# (set SESSION_COOKIE_SECURE=false to opt out for a plain-http deploy).
 ENV DATABASE_URL="sqlite:////opt/htmlhost/data/data.db" \
     UPLOAD_FOLDER="/opt/htmlhost/data/uploads" \
     FLASK_ENV="production" \
+    SESSION_COOKIE_SECURE="true" \
     APP_VERSION="${APP_VERSION}"
 
 EXPOSE 5001

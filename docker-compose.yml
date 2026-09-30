@@ -6,7 +6,10 @@ services:
     volumes:
       - htmlhost-data:/opt/htmlhost/data
     environment:
-      - SECRET_KEY=replace-this-with-a-secure-secret
+      # Required: compose refuses to start without it, and the app itself
+      # refuses to boot on this placeholder value. Set it in the shell or an
+      # .env file next to this one.
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY to a random value, e.g. in .env}
       # - MICROSOFT_CLIENT_ID=
       # - MICROSOFT_CLIENT_SECRET=
       # - MICROSOFT_TENANT_ID=

@@ -491,7 +491,9 @@ def view(token):
         return render_template("share/not_found.html"), 404
 
     if link.require_login and not current_user.is_authenticated:
-        return redirect(url_for("auth.login", next=request.url))
+        # Relative path, not request.url: auth._safe_next_url rejects
+        # absolute URLs, which is what request.url would hand it.
+        return redirect(url_for("auth.login", next=request.path))
 
     project = link.project
     index_file = _find_index_file(project)
@@ -548,4 +550,10 @@ def raw_file(token, rel_path):
     response = send_file(full_path)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    # The share viewer embeds this response in an iframe, so the app-wide
+    # X-Frame-Options: DENY / frame-ancestors 'none' must be relaxed here -
+    # but only to same-origin, so other sites still cannot frame user
+    # content. Direct assignment: the app-level hook ran first with DENY.
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
     return response

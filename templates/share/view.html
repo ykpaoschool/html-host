@@ -42,6 +42,10 @@
             <a href="/">HTMLHost</a>
         </div>
     </div>
-    <iframe srcdoc="{{ content | e }}" sandbox="allow-scripts allow-same-origin"></iframe>
+    <!-- No allow-same-origin: combined with allow-scripts it would make the
+         uploaded content same-origin with the app, letting it issue
+         credentialed requests as the viewer (e.g. read /admin pages).
+         Same posture as the project viewer's iframe. -->
+    <iframe srcdoc="{{ content | e }}" sandbox="allow-scripts"></iframe>
 </body>
 </html>

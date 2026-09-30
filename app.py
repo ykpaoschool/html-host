@@ -7,7 +7,7 @@ from flask_login import LoginManager, current_user
 from sqlalchemy import inspect, text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from config import Config
+from config import INSECURE_SECRET_KEYS, Config
 from i18n import get_language, load_translations, t_filter
 from models import User, db
 
@@ -20,6 +20,19 @@ login_manager.login_view = "auth.login"
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    # A known/default SECRET_KEY makes the signed session cookie forgeable
+    # (anyone can mint a valid admin session), so refuse to run at all.
+    if (
+        not app.config["SECRET_KEY"]
+        or app.config["SECRET_KEY"] in INSECURE_SECRET_KEYS
+    ):
+        raise RuntimeError(
+            "SECRET_KEY is missing or still a known default; refusing to start. "
+            "Generate one, e.g. python3 -c 'import secrets; "
+            "print(secrets.token_hex(32))', and pass it as the SECRET_KEY "
+            "environment variable."
+        )
 
     # Trust X-Forwarded-* headers from reverse proxy so that url_for()
     # generates https:// URLs when behind an SSL-terminating proxy.
@@ -57,6 +70,30 @@ def create_app():
     def prevent_caching(response):
         if response.content_type and "text/html" in response.content_type:
             response.cache_control.no_store = True
+        return response
+
+    @app.after_request
+    def set_security_headers(response):
+        """Baseline hardening for every response.
+
+        setdefault, not assignment: projects.raw_file overrides the framing
+        headers (the share viewer embeds it in an iframe), and any future
+        endpoint can do the same.
+        """
+        # Stop other sites framing the authenticated shell (clickjacking).
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy", "frame-ancestors 'none'"
+        )
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        # Keeps share URLs (which embed a secret token) from leaking to
+        # third-party sites through the Referer of subresources that shared
+        # pages load.
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        # Honored by browsers only over HTTPS; harmless on plain HTTP.
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000"
+        )
         return response
 
     app.jinja_env.filters["t"] = t_filter

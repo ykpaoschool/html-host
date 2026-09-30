@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 import bcrypt
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
@@ -10,6 +11,22 @@ from models import ApiToken, User, db, generate_api_token
 auth_bp = Blueprint("auth", __name__)
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_next_url(target):
+    """Return target only if it is a same-app relative path.
+
+    Anything else - an absolute URL, a protocol-relative '//host', or a
+    leading backslash, which browsers treat like a slash - could send the
+    user to another origin right after login (open redirect / phishing).
+    """
+    if not target:
+        return None
+    if not target.startswith("/") or target.startswith(("//", "/\\")):
+        return None
+    if urlparse(target).netloc:
+        return None
+    return target
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
@@ -29,8 +46,8 @@ def login():
         ):
             login_user(user)
             next_page = (
-                request.form.get("next")
-                or request.args.get("next")
+                _safe_next_url(request.form.get("next"))
+                or _safe_next_url(request.args.get("next"))
                 or url_for("dashboard.index")
             )
             return redirect(next_page)
