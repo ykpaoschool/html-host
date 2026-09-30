@@ -550,4 +550,10 @@ def raw_file(token, rel_path):
     response = send_file(full_path)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    # The share viewer embeds this response in an iframe, so the app-wide
+    # X-Frame-Options: DENY / frame-ancestors 'none' must be relaxed here -
+    # but only to same-origin, so other sites still cannot frame user
+    # content. Direct assignment: the app-level hook ran first with DENY.
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
     return response

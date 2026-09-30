@@ -35,3 +35,15 @@ class Config:
     # Public base URL used when building share / login links for API responses.
     # Fallback only: the primary source is the admin setting on /admin/mcp.
     PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
+    # Session cookie hardening. SameSite=Lax is what current browsers already
+    # assume for cookies without a policy; stating it keeps older ones from
+    # sending the session cookie on cross-site POSTs. Secure stays opt-in via
+    # env because local dev runs over plain http, where a Secure cookie is
+    # never sent back and login would appear broken.
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )

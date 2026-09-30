@@ -72,6 +72,30 @@ def create_app():
             response.cache_control.no_store = True
         return response
 
+    @app.after_request
+    def set_security_headers(response):
+        """Baseline hardening for every response.
+
+        setdefault, not assignment: projects.raw_file overrides the framing
+        headers (the share viewer embeds it in an iframe), and any future
+        endpoint can do the same.
+        """
+        # Stop other sites framing the authenticated shell (clickjacking).
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy", "frame-ancestors 'none'"
+        )
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        # Keeps share URLs (which embed a secret token) from leaking to
+        # third-party sites through the Referer of subresources that shared
+        # pages load.
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        # Honored by browsers only over HTTPS; harmless on plain HTTP.
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000"
+        )
+        return response
+
     app.jinja_env.filters["t"] = t_filter
     app.jinja_env.globals["get_language"] = get_language
     app.jinja_env.globals["LANGUAGES"] = app.config["LANGUAGES"]

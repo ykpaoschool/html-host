@@ -175,6 +175,7 @@ Configuration is provided through environment variables.
 | Variable | Description | Default |
 | --- | --- | --- |
 | `SECRET_KEY` | Flask secret key | *(refuses to start on the dev default or the compose placeholder)* |
+| `SESSION_COOKIE_SECURE` | Mark the session cookie `Secure` | `true` in the container and `./run.sh prod`; `false` otherwise |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///data.db` |
 | `UPLOAD_FOLDER` | Directory for uploaded files | `uploads/` (relative to project root) |
 | `MICROSOFT_CLIENT_ID` | Azure AD client ID (SSO disabled when empty) | `""` (SSO disabled) |
