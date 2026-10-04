@@ -555,5 +555,12 @@ def raw_file(token, rel_path):
     # but only to same-origin, so other sites still cannot frame user
     # content. Direct assignment: the app-level hook ran first with DENY.
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+    # sandbox: these URLs are reachable on their own, not only through the
+    # viewer, and without it a project file would run as a first-party
+    # document on this origin, with the viewer's session cookie within reach.
+    # The frame's own sandbox attribute and this directive are intersected,
+    # so the allowances here must match templates/projects/view.html.
+    response.headers["Content-Security-Policy"] = (
+        "frame-ancestors 'self'; sandbox allow-scripts allow-popups"
+    )
     return response

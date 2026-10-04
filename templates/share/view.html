@@ -42,10 +42,16 @@
             <a href="/">HTMLHost</a>
         </div>
     </div>
-    <!-- No allow-same-origin: combined with allow-scripts it would make the
+    <!-- Real file URL (not srcdoc) so in-page "#anchor" links are
+         same-document jumps. A srcdoc document inherits the parent's base
+         URL, so "#anchor" would resolve to /s/<token>#anchor and navigate the
+         frame into the viewer page, which X-Frame-Options: DENY blocks.
+         No allow-same-origin: combined with allow-scripts it would make the
          uploaded content same-origin with the app, letting it issue
          credentialed requests as the viewer (e.g. read /admin pages).
-         Same posture as the project viewer's iframe. -->
-    <iframe srcdoc="{{ content | e }}" sandbox="allow-scripts"></iframe>
+         Same posture as the project viewer's iframe. allow-popups lets the
+         shared page's target="_blank" links open, still into a sandboxed
+         window (no allow-popups-to-escape-sandbox). -->
+    <iframe src="{{ raw_url }}" sandbox="allow-scripts allow-popups"></iframe>
 </body>
 </html>
