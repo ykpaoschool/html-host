@@ -96,8 +96,8 @@ class ShareLink(db.Model):
 
 
 class Project(db.Model):
-    """A group of HTML + static assets shared as a single unit with real URLs,
-    so relative links between pages resolve correctly (unlike single-file srcdoc)."""
+    """A group of HTML + static assets shared as a single unit, so relative
+    links between pages all resolve within one shared artifact."""
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
