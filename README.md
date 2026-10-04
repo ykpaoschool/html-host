@@ -138,6 +138,22 @@ The application will be available at `http://localhost:5001`.
 
 **Data persistence:** The `/opt/htmlhost/data` directory inside the container holds both the SQLite database (`data.db`) and uploaded files (`uploads/`). Mount it as a volume to persist data across container rebuilds.
 
+The *host* side of that mount is yours to choose; the container side is not:
+
+```bash
+# Named volume (what docker-compose.yml uses) - Docker picks the location.
+-v htmlhost-data:/opt/htmlhost/data
+
+# Bind mount - you pick the location, and can see and back it up directly.
+-v /opt/apps/htmlhost/data:/opt/htmlhost/data
+```
+
+`/opt/htmlhost/data` is fixed: it is baked into the image's `DATABASE_URL` and `UPLOAD_FOLDER`, and `entrypoint.sh` chowns it before dropping privileges. Only the part before the `:` varies — and `DATA_DIR` is read by nothing, so changing it has no effect.
+
+Pick a bind mount when the data should live at a path you control (a per-app directory under `/opt/apps`, an existing backup target, a network mount) that you can `tar` or `rsync` without going through Docker; pick a named volume when you would rather Docker own the location and lifecycle. The application behaves identically either way.
+
+**When switching an existing deployment from a named volume to a bind mount, copy the data across first.** The new mount starts empty, and the app will create a fresh `data.db` in it and send you through `/setup` again rather than reporting the old database missing.
+
 **Environment variables for Docker:**
 
 | Variable | Docker Default | Description |
