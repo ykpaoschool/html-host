@@ -25,9 +25,11 @@ COPY app.py config.py models.py auth.py dashboard.py share.py admin.py i18n.py p
 COPY VERSION .
 COPY templates/ templates/
 COPY translations/ translations/
+# Editor asset (static/vendor/codemirror.js). Served straight from /static, so it
+# has to be in the image — nothing generates it at build or run time.
+COPY static/ static/
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
-RUN mkdir -p static/css static/js
 
 # Create non-root user and data directory
 RUN groupadd -g 1000 htmlhost && \
