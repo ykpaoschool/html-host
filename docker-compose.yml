@@ -4,7 +4,12 @@ services:
     ports:
       - "5001:5001"
     volumes:
+      # The container path is fixed; the host side is yours to choose. To keep
+      # the data at a path you control (and back it up without going through
+      # Docker), comment the named volume below and uncomment the bind mount.
+      # See README, "Data persistence".
       - htmlhost-data:/opt/htmlhost/data
+      # - /opt/apps/htmlhost/data:/opt/htmlhost/data
     environment:
       # Required: compose refuses to start without it, and the app itself
       # refuses to boot on this placeholder value. Set it in the shell or an

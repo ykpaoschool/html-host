@@ -7,9 +7,11 @@ set -e
 # writing to it. This entrypoint runs as root to fix permissions before
 # dropping to the application user.
 
-DATA_DIR="${DATA_DIR:-/opt/htmlhost/data}"
-
-mkdir -p "$DATA_DIR/uploads"
-chown -R htmlhost:htmlhost "$DATA_DIR"
+# The path is intentionally not configurable: it must match the DATABASE_URL
+# and UPLOAD_FOLDER defaults baked into the image (see Dockerfile). A deployer
+# who wants the data somewhere specific chooses the host side of the mount
+# (-v /host/dir:/opt/htmlhost/data), not this one.
+mkdir -p /opt/htmlhost/data/uploads
+chown -R htmlhost:htmlhost /opt/htmlhost/data
 
 exec gosu htmlhost "$@"
