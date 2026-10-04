@@ -102,6 +102,7 @@ def create_app():
 
     from auth import auth_bp
     from dashboard import dashboard_bp
+    from editor import editor_bp
     from projects import projects_bp
     from share import share_bp
     from admin import admin_bp
@@ -109,6 +110,9 @@ def create_app():
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
+    # Editor routes live under the same /files/* family as dashboard's, which
+    # is already the case for share_bp's /s/<token>.
+    app.register_blueprint(editor_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(share_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")

@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy application code
-COPY app.py config.py models.py auth.py dashboard.py share.py admin.py i18n.py projects.py api.py version.py ./
+COPY app.py config.py models.py auth.py dashboard.py editor.py share.py admin.py i18n.py projects.py api.py version.py ./
 # Hand-maintained base version, read at startup by version.py.
 COPY VERSION .
 COPY templates/ templates/
