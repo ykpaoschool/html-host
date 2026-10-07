@@ -65,6 +65,16 @@
             {{ 'save' | t }}
         </button>
 
+        {# Unlike "history" this is not edit-mode only: the draft is what gets
+           previewed, and a file that has not been created yet needs that most.
+           It is hidden for a read-only or missing file the same way history
+           is - there is no content in the editor to render. #}
+        <button type="button" x-cloak x-show="!readonlyReason && !fatal" @click="toggleDraft()"
+            class="px-3 py-2 rounded-xl border text-sm font-medium transition"
+            :class="draftOpen ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
+            {{ 'editor_preview' | t }}
+        </button>
+
         {# Edit mode only: a file that does not exist yet has no revisions. #}
         <button type="button" x-cloak x-show="mode === 'edit' && !fatal" @click="toggleHistory()"
             class="px-3 py-2 rounded-xl border text-sm font-medium transition"
@@ -137,6 +147,49 @@
                     </div>
                     <div x-ref="previewHost" class="flex-1 min-h-0"
                          x-init="$nextTick(() => mountPreview())"></div>
+                </div>
+            </template>
+
+            <!-- The draft, rendered by the browser from a blob: URL. A second
+                 overlay in the same slot as the revision preview, and kept
+                 mutually exclusive with it (openDraftPreview() closes that one,
+                 openRevision() closes this one): two z-20 overlays stacked would
+                 leave no way to tell which one the close button belongs to.
+
+                 sandbox="allow-scripts allow-popups" - and allow-same-origin
+                 must NEVER be added to it. With that flag the frame keeps the
+                 app's real origin, so the uploaded HTML would run as a
+                 first-party document: it could read the session cookie, call
+                 the API as the signed-in user, and reach into parent.document.
+                 The frame is deliberately opaque-origin, which is also why the
+                 draft never leaves the browser - there is no preview route and
+                 nothing is written to disk.
+
+                 Two accepted costs of this approach, neither of them a bug:
+                 relative references like ./style.css silently do not load (no
+                 request, no error, the rest of the page still renders), and
+                 in-page <a href="#x"> anchors do nothing. Both are settled in
+                 editor-implementation.md 1.5. Note the anchor one comes from
+                 the sandbox attribute, not from blob:, so don't go looking for
+                 a base-URL problem.
+
+                 <template x-if>, not x-show: closing has to tear the document
+                 down, otherwise a script the draft started (setInterval, a
+                 listener) would keep running behind a hidden iframe. -->
+            <template x-if="draftOpen">
+                <div class="absolute inset-0 z-20 flex flex-col bg-white">
+                    <div class="flex-shrink-0 flex items-center gap-3 px-4 py-2 bg-purple-50 border-b border-purple-200 text-sm text-purple-800">
+                        <span class="font-medium">{{ 'editor_preview_draft' | t }}</span>
+                        <span class="text-xs text-purple-500">{{ 'editor_preview_hint' | t }}</span>
+                        <div class="flex-1"></div>
+                        <button type="button" @click="closeDraftPreview()"
+                            class="px-3 py-1.5 rounded-lg border border-purple-300 text-xs font-medium hover:bg-purple-100 transition">
+                            {{ 'editor_preview_close' | t }}
+                        </button>
+                    </div>
+                    <iframe :src="draftUrl" sandbox="allow-scripts allow-popups"
+                            title="{{ 'editor_preview_draft' | t }}"
+                            class="flex-1 w-full border-0 bg-white"></iframe>
                 </div>
             </template>
         </div>
@@ -237,6 +290,13 @@ function editorPage() {
         previewText: '',
         previewView: null,
         restoring: false,
+        // Draft preview. Deliberately a separate set of names from the history
+        // preview above: they are two different previews of two different
+        // things (an old revision on a read-only CodeMirror vs. the live draft
+        // in a sandboxed frame) and sharing state between them would let one
+        // clobber the other.
+        draftOpen: false,
+        draftUrl: null,
         strings: {
             tooLarge: {{ 'editor_readonly_too_large' | t | tojson }},
             notUtf8: {{ 'editor_readonly_not_utf8' | t | tojson }},
@@ -585,6 +645,9 @@ function editorPage() {
 
         async openRevision(revision) {
             this.historyError = '';
+            // The other half of the mutual exclusion described on the draft
+            // overlay: only one of the two z-20 previews may be up at a time.
+            this.closeDraftPreview();
             try {
                 const response = await fetch('/files/' + this.fileId + '/history/' + revision.id);
                 if (this.sessionExpired(response)) {
@@ -646,6 +709,64 @@ function editorPage() {
             this.previewOpen = false;
             this.previewText = '';
             this.previewRevision = null;
+        },
+
+        // --- Draft preview ----------------------------------------------------
+
+        toggleDraft() {
+            if (this.draftOpen) {
+                this.closeDraftPreview();
+            } else {
+                this.openDraftPreview();
+            }
+        },
+
+        openDraftPreview() {
+            if (!this.view) return;
+            // The revision preview is the one overlay this could stack with, so
+            // it goes first - see the comment on the draft overlay in the markup.
+            this.closePreview();
+            // Anything still holding a URL is leaked memory; releasing before
+            // minting the next one is what keeps createObjectURL and
+            // revokeObjectURL in step.
+            this.releaseDraftUrl();
+
+            // What gets previewed is the editor's draft, never the file on the
+            // server - showing the saved bytes here would hand the user the one
+            // version they already know is out of date.
+            //
+            // sliceDoc(), not view.state.doc.toString(): toString() hardcodes
+            // "\n" and ignores the lineSeparator facet, so a CRLF draft would
+            // preview with different line breaks from the file that saving it
+            // produces. Same rule as the save path.
+            const draft = this.view.state.sliceDoc();
+            // The type declares the encoding instead of leaving it to the
+            // browser: a draft need not carry a <meta charset>, and the frame
+            // has no header of its own, so what would be left is the sniffing
+            // fallback - which is not specified to be UTF-8. Belt and braces,
+            // as it happens: measured on Chrome 154, default locale and
+            // --lang=zh-CN alike, a blob frame reports UTF-8 either way. The
+            // bytes really are UTF-8, because the editor only ever holds UTF-8.
+            const blob = new Blob([draft], { type: 'text/html;charset=utf-8' });
+            this.draftUrl = URL.createObjectURL(blob);
+            // Set the src before flipping the flag: the <template x-if> clones
+            // its content when the flag turns true, and the iframe needs a URL
+            // to be cloned with.
+            this.draftOpen = true;
+        },
+
+        closeDraftPreview() {
+            // The flag goes first so the iframe is taken out of the document;
+            // the URL is worthless once nothing is showing it.
+            this.draftOpen = false;
+            this.releaseDraftUrl();
+        },
+
+        releaseDraftUrl() {
+            if (this.draftUrl) {
+                URL.revokeObjectURL(this.draftUrl);
+                this.draftUrl = null;
+            }
         },
 
         async restore() {
