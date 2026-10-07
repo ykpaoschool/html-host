@@ -14,8 +14,8 @@ Both are gated by ``User.mcp_enabled``: a single rule for the whole plane.
 Error contract: every failure is ``{"error": <CODE>, "message": <English>}``,
 never HTML. Codes: UNAUTHORIZED, MCP_DISABLED, USER_NOT_REGISTERED, NOT_FOUND,
 METHOD_NOT_ALLOWED, INVALID_REQUEST, INVALID_PATH, DUPLICATE_PATH,
-UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, PAYLOAD_TOO_LARGE, TOO_MANY_FILES,
-PROJECT_TOO_LARGE.
+UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, PAYLOAD_TOO_LARGE, CONTENT_TOO_LARGE,
+CONTENT_NOT_UTF8, TOO_MANY_FILES, PROJECT_TOO_LARGE.
 
 Two deliberate absences: there is **no endpoint that deletes content** (files
 or projects) — MCP may only publish and revoke links — and no cross-user
@@ -49,6 +49,7 @@ from models import (
     ProjectShareLink,
     ShareLink,
     User,
+    content_revision,
     db,
     hash_api_token,
     hash_mcp_secret,
@@ -755,6 +756,85 @@ def file_get(file_id):
     """File details, including the share links already minted for it."""
     file = _file_or_404(file_id, g.api_user.id)
     return jsonify(_file_payload(file, include_links=True))
+
+
+@api_bp.route("/files/<int:file_id>/content", methods=["GET"])
+def file_get_content(file_id):
+    """A file's bytes as text, plus the revision those bytes hash to (F11).
+
+    The counterpart of the PUT below, and the missing half of the plane: until
+    now an agent could publish a file and never read it back, so the "generate,
+    hand-tune, read again" loop the editor exists for could not be closed
+    through the API.
+
+    The text is the file's own bytes, not a normalized copy of them: sending it
+    straight back to the PUT reproduces the file exactly, so a revision only
+    moves when the caller really changed something.
+    """
+    file = _file_or_404(file_id, g.api_user.id)
+    full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
+    # No _ensure_upload_dir here, unlike the write path: it recreates a missing
+    # parent directory, and a read must not create anything.
+    if not os.path.exists(full_path):
+        # The row exists, its bytes do not - the state share.view and the
+        # editor both answer 404 for. Reported with the plane's usual code and
+        # a message that says which of the two 404s this is.
+        raise ApiError(
+            "NOT_FOUND",
+            f"File {file_id} has no content on disk: its stored path no longer "
+            "exists.",
+            404,
+        )
+
+    # Before the read, so an oversized file is refused without pulling it into
+    # memory. The ceiling is the API plane's own per-call limit rather than the
+    # editor's 2 MiB one: it is what one call can carry in either direction, and
+    # a file too big for the browser editor is still perfectly readable here.
+    size = os.path.getsize(full_path)
+    if size > MAX_API_CONTENT_SIZE:
+        # Its own code rather than the write path's PAYLOAD_TOO_LARGE: same
+        # condition, opposite direction, and the two ask the caller for
+        # different things. A caller branching on the code must be able to tell
+        # "your upload was too big" from "this file is too big to hand you".
+        raise ApiError(
+            "CONTENT_TOO_LARGE",
+            f"File {file_id} is {size} bytes, over the {MAX_API_CONTENT_SIZE} byte "
+            "limit (3 MiB is the maximum for a single API call), so its content "
+            "cannot be returned. Open it in the HTMLHost web UI instead.",
+            413,
+        )
+
+    with open(full_path, "rb") as fh:
+        data = fh.read()
+
+    try:
+        # Plain utf-8, where the editor decodes utf-8-sig and strips the BOM:
+        # here the bytes are the interface, and dropping the mark would make
+        # "read, then write back unchanged" quietly a different file. Never
+        # errors="replace", for the reason the editor gives - the replacement
+        # characters would come back as real ones on the next PUT and destroy
+        # the file. A file that is not UTF-8 is refused instead.
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ApiError(
+            "CONTENT_NOT_UTF8",
+            f"File {file_id} is not valid UTF-8 text, so its content cannot be "
+            "returned as JSON. Open it in the HTMLHost web UI instead.",
+            415,
+        )
+
+    response = jsonify(
+        {
+            "content": text,
+            "updated_at": _iso(file.updated_at),
+            "revision": content_revision(data),
+        }
+    )
+    # The body is out of date the moment the PUT lands, and app.py's
+    # prevent_caching only covers text/html, so without this a client can be
+    # handed content it has already replaced.
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @api_bp.route("/files/<int:file_id>/content", methods=["PUT"])
