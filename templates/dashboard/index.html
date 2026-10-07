@@ -81,6 +81,11 @@
                     <td class="px-6 py-4 text-sm text-gray-500">{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
                     <td class="px-6 py-4 text-right">
                         <div class="flex items-center justify-end gap-2">
+                            <!-- Edit -->
+                            <a href="{{ url_for('editor.edit_file', file_id=file.id) }}"
+                                class="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition" title="{{ 'edit' | t }}">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            </a>
                             <!-- Share -->
                             <button @click="shareFile({{ file.id }}, '{{ file.name }}')"
                                 class="p-2 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition" title="{{ 'share' | t }}">

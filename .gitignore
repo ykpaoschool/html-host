@@ -8,3 +8,4 @@ __pycache__/
 CLAUDE.md
 
 .codegraph/
+tools/editor-build/node_modules/
