@@ -44,6 +44,31 @@ MAX_TOOL_CONTENT_SIZE = 3 * 1024 * 1024
 # See the requirements' §7 and the implementation plan §0.3.
 MAX_REQUEST_BODY_SIZE = 8 * 1024 * 1024
 
+#: How much of one file a single read may carry back to the model.
+#:
+#: Not the API's number, unlike MAX_TOOL_CONTENT_SIZE: the API hands over the
+#: whole file (up to its own 3 MiB), and the tools decide how much of it to put
+#: in front of the model. A 3 MiB document is roughly 750k-1M tokens, so one
+#: ungated read of one would end the conversation - and the file is only
+#: readable at all because it can be read in windows.
+#:
+#: Measured in UTF-8 bytes because that is what a token count tracks: a Chinese
+#: character costs 3 bytes and about a token, a Latin one 1 byte and a quarter
+#: of one. A character budget would therefore be four times looser on the script
+#: that is four times denser. 40 KB is ~10k tokens of markup or ~17k of Chinese
+#: text: real context, but not enough to end a session on its own.
+MAX_READ_BYTES = 40_000
+
+#: Lines per read window when the caller does not say. The byte ceiling above is
+#: the actual limit; this one keeps an ordinary answer small (200 lines of a
+#: hand-written page is a few KB) and gives the model a unit it can reason about.
+DEFAULT_READ_LINES = 200
+
+#: The most lines one window may be asked for. Past this the byte ceiling would
+#: decide anyway; the cap is here so a caller cannot ask for a number whose
+#: effect it cannot predict.
+MAX_READ_LINES = 2_000
+
 #: Scheme-less names that mean "this machine". Kept as literals because
 #: ``ipaddress`` cannot parse them.
 _LOOPBACK_NAMES = frozenset({"localhost"})

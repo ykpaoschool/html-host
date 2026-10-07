@@ -1,7 +1,7 @@
 # htmlhost-mcp
 
-An MCP server that gives an agent a way to publish HTML to HTMLHost and manage
-the links it shares.
+An MCP server that gives an agent a way to publish HTML to HTMLHost, read it
+back, and manage the links it shares.
 
 It is a **stateless thin proxy**. It parses no credentials, stores no user data
 and keeps no per-user session state: each call forwards the caller's own auth

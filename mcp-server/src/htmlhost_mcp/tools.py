@@ -1,4 +1,4 @@
-"""The eleven MCP tools, each a thin translation of one /api/v1 call.
+"""The twelve MCP tools, each a thin translation of one /api/v1 call.
 
 The tools validate nothing the API already validates and decide nothing the API
 already decides: ownership, quotas and expiry all belong to HTMLHost, which is
@@ -12,6 +12,7 @@ the default visibility, and the rule about relaying error messages unchanged.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal, Optional
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -20,7 +21,12 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .client import HtmlHostClient, resolve_auth
-from .config import MAX_TOOL_CONTENT_SIZE
+from .config import (
+    DEFAULT_READ_LINES,
+    MAX_READ_BYTES,
+    MAX_READ_LINES,
+    MAX_TOOL_CONTENT_SIZE,
+)
 from .errors import HtmlHostError
 
 logger = logging.getLogger(__name__)
@@ -35,6 +41,15 @@ _RELAY_NOTE = (
     "with no way forward."
 )
 
+#: Appended to every answer that is not a whole file. A tool description can ask
+#: the model not to write a fragment back, but nothing enforces it: the one
+#: irreversible mistake this tool makes possible is replacing a document with
+#: the part of it that happened to be read, so the answer says so too.
+_PARTIAL_NOTE = (
+    "Do not pass a partial window to update_content: it would replace the "
+    "document with the fragment above."
+)
+
 #: The expiry vocabulary. An enum rather than a free string because a typo here
 #: costs a round-trip and HTMLHost accepts exactly these four. Anything else
 #: belongs in expires_at, which takes an ISO-8601 timestamp.
@@ -47,8 +62,9 @@ HTMLHost publishes HTML and serves it at a shareable URL. Everything you do
 through these tools is filed under the account of the person you are acting
 for, and you can only see that account's content.
 
-Usual flow: publish_html (or publish_project) to get a URL, update_content to
-revise it while the URL stays the same, revoke_share to stop sharing it.
+Usual flow: publish_html (or publish_project) to get a URL, get_file_content to
+read a document back, update_content to revise it while the URL stays the same,
+revoke_share to stop sharing it.
 
 - Expiry: pass expires_in rather than computing a date yourself. It accepts
   "30m", "24h", "7d" or "never". Use expires_at only when an exact timestamp is
@@ -214,6 +230,39 @@ def _page_note(data, noun):
     )
 
 
+def _fenced(text):
+    """``text`` in a code fence that its own contents cannot close.
+
+    A page that documents HTML contains fenced code blocks of its own, and the
+    usual three backticks would end at the first of them - leaving the model to
+    guess where the file it just read actually stops.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
+def _prefix_within(text, max_bytes):
+    """How many characters of ``text`` fit inside ``max_bytes`` of UTF-8.
+
+    The window's budget is bytes (see config.MAX_READ_BYTES), but the cut is
+    made between characters, so it can never land inside one and leave a
+    fragment that is not text at all. A bisection rather than a decode with
+    errors ignored: the answer is the same and nothing here has to decide what
+    to do with bytes it cannot read.
+    """
+    if len(text.encode("utf-8")) <= max_bytes:
+        return len(text)
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(text[:middle].encode("utf-8")) <= max_bytes:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
 def _expiry_fields(expires_in, expires_at=None):
     """Build the expiry half of a share payload.
 
@@ -261,7 +310,7 @@ def _created_output(label, link):
 
 
 def register_tools(server, config):
-    """Attach the eleven tools to ``server``, wired to ``config``."""
+    """Attach the twelve tools to ``server``, wired to ``config``."""
     client = HtmlHostClient(config)
 
     # -- identity ----------------------------------------------------------
@@ -529,7 +578,8 @@ def register_tools(server, config):
         link minted for it.
 
         Use this to find out whether something is already shared before minting
-        another link for it.
+        another link for it. It carries no document text; to read a document's
+        text, use get_file_content.
         """
         api = _Api(client, config, ctx)
         if target_type == "file":
@@ -561,6 +611,192 @@ def register_tools(server, config):
 
         lines += ["", "Share links:", _share_block(item.get("share_links", []))]
         return "\n".join(lines)
+
+    @_tool(server)
+    async def get_file_content(
+        ctx: Context,
+        file_id: int,
+        offset: int = 1,
+        limit: int = DEFAULT_READ_LINES,
+        offset_chars: Optional[int] = None,
+    ) -> str:
+        # A plain string, not an f-string: an f-string is not a docstring, so the
+        # whole description below would silently vanish and the model would be
+        # left with nothing but the relay note _tool appends. The three numbers
+        # quoted here are therefore written out - keep them in step with
+        # config.MAX_READ_BYTES, DEFAULT_READ_LINES and MAX_READ_LINES.
+        """Read a published document's text back, one window at a time.
+
+        Use this to see a document as it stands now - after publishing it, or
+        before revising one that a person may have edited in the HTMLHost web
+        UI. Only single documents can be read this way; a project's files cannot
+        be read through these tools.
+
+        A large document is never returned all at once. One of them can cost
+        hundreds of thousands of tokens, which ends the conversation, so the
+        answer is one window of it. ``offset`` is the first line to return (lines
+        are numbered from 1) and ``limit`` is how many lines to ask for (default
+        200, at most 2,000); a window also stops at 40,000 bytes, whichever comes
+        first. Every answer states the lines it covers and the document's total,
+        so you can always tell whether you are holding the whole file.
+
+        **When the answer says it is not the whole file, do not pass what you
+        read to update_content.** That would replace the document with the
+        fragment you happened to see. Read the remaining windows first.
+
+        The text is byte for byte what is stored, so a window covering the whole
+        file can be edited and written back unchanged. The revision reported
+        with it is the same value the HTMLHost web editor shows for this
+        document, which is also how to check that you are looking at the version
+        you expected.
+
+        ``offset_chars`` continues a single line that is too long for one
+        window; when that happens the answer says which value to pass. Leave it
+        out otherwise.
+        """
+        api = _Api(client, config, ctx)
+        if offset < 1:
+            raise ToolError("offset is a line number and starts at 1.")
+        if limit < 1:
+            raise ToolError("limit is a number of lines and must be at least 1.")
+        if offset_chars is not None and offset_chars < 0:
+            raise ToolError(
+                "offset_chars is a character position within a line and cannot "
+                "be negative. Leave it out to start at the line's beginning."
+            )
+
+        # The name comes from the details call: the content endpoint answers with
+        # the text, the revision and the timestamp only, and an answer that names
+        # the document is easier to trust than one showing a bare id.
+        item = await api("GET", f"/files/{file_id}")
+        data = await api("GET", f"/files/{file_id}/content")
+
+        text = data["content"]
+        lines = text.split("\n")
+        total_lines = len(lines)
+        size = len(text.encode("utf-8"))
+
+        if offset > total_lines:
+            raise ToolError(
+                f"offset {offset} is past the end: file {file_id} has "
+                f"{total_lines:,} line(s). Start again at offset=1 - the "
+                "document may have changed since you last read it."
+            )
+
+        limit = min(limit, MAX_READ_LINES)
+        start = offset - 1
+        line = lines[start]
+        line_bytes = len(line.encode("utf-8"))
+
+        header = [
+            f"**{item['name']}** (file id {item['id']}) - {total_lines:,} line(s), "
+            f"{size:,} bytes, updated {data.get('updated_at')}",
+            f"Revision `{data['revision']}` - the same value the HTMLHost web "
+            "editor shows for this document.",
+        ]
+
+        if offset_chars:
+            # Continuing a line too long for one window. Only that line is ever
+            # carried here: a window that mixed the tail of one line into a run
+            # of the lines after it would make its own line range untrue.
+            if offset_chars >= len(line):
+                raise ToolError(
+                    f"offset_chars {offset_chars:,} is past the end of line "
+                    f"{offset}, which is {len(line):,} character(s) long."
+                )
+            rest = line[offset_chars:]
+            if len(rest.encode("utf-8")) > MAX_READ_BYTES:
+                kept = _prefix_within(rest, MAX_READ_BYTES)
+                return "\n".join(
+                    header
+                    + [
+                        "",
+                        f"Line {offset} is {line_bytes:,} bytes long, more than "
+                        f"one window holds ({MAX_READ_BYTES:,} bytes), so it has "
+                        "to be read in pieces.",
+                        f"This window is line {offset} from character "
+                        f"{offset_chars:,} onward: its next {kept:,} characters. "
+                        "The line is not finished.",
+                        "",
+                        _fenced(rest[:kept]),
+                        "",
+                        f"Call get_file_content again with file_id={item['id']}, "
+                        f"offset={offset}, offset_chars={offset_chars + kept} to "
+                        f"continue inside this line. {_PARTIAL_NOTE}",
+                    ]
+                )
+            after = (
+                f"Continue with offset={offset + 1}."
+                if offset < total_lines
+                else "That was the document's last line."
+            )
+            return "\n".join(
+                header
+                + [
+                    "",
+                    f"The rest of line {offset}, from character {offset_chars:,} "
+                    f"onward ({len(rest):,} characters). Line {offset} is now "
+                    "complete.",
+                    "",
+                    _fenced(rest),
+                    "",
+                    f"{after} {_PARTIAL_NOTE}",
+                ]
+            )
+
+        if line_bytes > MAX_READ_BYTES:
+            # A single line bigger than a whole window - minified markup, usually.
+            # Left unhandled, the documents an agent is most likely to have
+            # published itself would be unreadable through this tool.
+            kept = _prefix_within(line, MAX_READ_BYTES)
+            return "\n".join(
+                header
+                + [
+                    "",
+                    f"Line {offset} is {line_bytes:,} bytes long, more than one "
+                    f"window holds ({MAX_READ_BYTES:,} bytes), so it has to be "
+                    "read in pieces.",
+                    f"This window is the first {kept:,} characters of line "
+                    f"{offset}. The line is not finished.",
+                    "",
+                    _fenced(line[:kept]),
+                    "",
+                    f"Call get_file_content again with file_id={item['id']}, "
+                    f"offset={offset}, offset_chars={kept} to continue inside this "
+                    f"line. {_PARTIAL_NOTE}",
+                ]
+            )
+
+        # Whole lines only, so consecutive windows can be joined back into the
+        # file: the newline between each pair is part of what the window costs. A
+        # line that would cross the ceiling ends the window instead of being cut,
+        # which is why the two cases above are handled first.
+        end = min(start + limit, total_lines)
+        window = [line]
+        used = line_bytes
+        for index in range(start + 1, end):
+            cost = len(lines[index].encode("utf-8")) + 1
+            if used + cost > MAX_READ_BYTES:
+                break
+            window.append(lines[index])
+            used += cost
+        last = start + len(window)  # also the 1-based number of the last line
+
+        if offset == 1 and last == total_lines:
+            cover = f"The whole file (lines 1-{total_lines:,}):"
+            tail = ""
+        else:
+            cover = (
+                f"Lines {offset:,}-{last:,} of {total_lines:,} - not the whole "
+                "file:"
+            )
+            # The final window of a file read from the front says so, rather
+            # than pointing at a line that does not exist.
+            if last == total_lines:
+                tail = f"\n\nThat is the end of the document. {_PARTIAL_NOTE}"
+            else:
+                tail = f"\n\nContinue with offset={last + 1}. {_PARTIAL_NOTE}"
+        return "\n".join(header + ["", cover, "", _fenced("\n".join(window))]) + tail
 
     # -- share links -------------------------------------------------------
 
