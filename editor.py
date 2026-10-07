@@ -2,9 +2,9 @@
 
 Open an existing file and write it back in place, so the share links already
 handed out keep working, or start a new one (see
-``.claude/plans/editor-implementation.md`` §3 and §5). Preview (§4.3) and the
-API read endpoint (§3.8) belong to later phases and deliberately have no route
-here yet.
+``.claude/plans/editor-implementation.md`` §3 and §5). The API plane's own read
+endpoint (§3.8) lives in ``api.py`` instead: it authenticates differently and
+has no route here.
 
 Two properties are load-bearing and easy to break:
 
@@ -15,6 +15,9 @@ Two properties are load-bearing and easy to break:
   without raising anything.
 * Nothing is cached in process memory. Content hashes are recomputed from disk
   on every read, so the two gunicorn workers have no state to disagree about.
+  The hash itself is ``models.content_revision`` and is deliberately not defined
+  here: the API plane returns the same value to its own callers for the same
+  file, and one definition is what keeps the two from drifting.
 
 A third applies to saving: the bytes being replaced are kept as a revision
 before the new ones land, and a revision's blob is named after its row's
@@ -22,7 +25,6 @@ primary key. The write order in ``_apply_content`` is therefore part of the
 contract, not a detail to rearrange.
 """
 
-import hashlib
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -44,7 +46,7 @@ from dashboard import (
     create_file,
     history_dir,
 )
-from models import File, FileRevision, Folder, db
+from models import File, FileRevision, Folder, content_revision, db
 
 editor_bp = Blueprint("editor", __name__)
 
@@ -101,16 +103,6 @@ def _file_or_404(file_id):
 
 def _full_path(file):
     return os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
-
-
-def _revision(data):
-    """Content hash used as the optimistic-lock token.
-
-    A hash rather than ``updated_at``: SQLite returns naive datetimes (so every
-    comparison needs timezone normalization) and a file edited on disk behind
-    the app's back never updates the column at all.
-    """
-    return hashlib.sha256(data).hexdigest()
 
 
 def _iso_utc(value):
@@ -291,7 +283,7 @@ def _apply_content(file, data, base_revision):
     with open(full_path, "rb") as handle:
         previous = handle.read()
 
-    current_revision = _revision(previous)
+    current_revision = content_revision(previous)
     if current_revision != base_revision:
         # Someone (or something) changed the file since the editor loaded it.
         # Hand back the revision that is actually on disk so the client can
@@ -366,7 +358,7 @@ def _apply_content(file, data, base_revision):
     _prune_revisions(file)
 
     return {
-        "revision": _revision(data),
+        "revision": content_revision(data),
         "size": len(data),
         "updated_at": now.isoformat(),
     }, 200
@@ -485,7 +477,7 @@ def create_new_file():
                 "id": file.id,
                 "name": file.name,
                 # 7. The hash the editor will save its next edit against.
-                "revision": _revision(data),
+                "revision": content_revision(data),
                 "size": len(data),
                 "edit_url": url_for("editor.edit_file", file_id=file.id),
             }
@@ -565,7 +557,7 @@ def get_content(file_id):
         else:
             payload["content"] = text
             payload["line_separator"] = _detect_line_separator(text)
-            payload["revision"] = _revision(data)
+            payload["revision"] = content_revision(data)
 
     response = jsonify(payload)
     # prevent_caching in app.py only covers text/html, so JSON is cached by the

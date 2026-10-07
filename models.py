@@ -115,6 +115,24 @@ class FileRevision(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+def content_revision(data):
+    """The SHA-256 of a file's bytes: how both planes name one version of it.
+
+    Defined once, and deliberately not in either plane. The editor hands this
+    value to the browser as the optimistic-lock token a save must be based on,
+    and ``GET /api/v1/files/<id>/content`` hands the same string to API clients
+    (requirements F11), so the two must agree byte for byte - a second
+    implementation would drift and tell a client that a file it had just read
+    had changed underneath it.
+
+    A hash rather than ``updated_at``: SQLite returns naive datetimes (so every
+    comparison needs timezone normalization) and a file edited on disk behind
+    the app's back never updates the column at all. Always computed from the
+    bytes on disk, never reconstructed from a size or a timestamp.
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
 class ShareLink(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"), nullable=False)
