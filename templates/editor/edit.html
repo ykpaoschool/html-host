@@ -31,9 +31,21 @@
         </a>
 
         <div class="flex items-center gap-2 min-w-0">
-            <span class="text-sm font-medium text-gray-800 truncate">
-                {{ file.name if file else ('editor_new_file' | t) }}
-            </span>
+            {# Create mode shows the name field where the title normally sits.
+               The ".html" beside it is a label, not part of the value, so the
+               suffix cannot be edited away. Both the field and the title stay
+               in the markup and are swapped by Alpine: the first successful
+               save turns this page into the edit page of the file it just
+               created, and the swap has to happen without a round trip. #}
+            <span x-cloak x-show="mode === 'edit'"
+                  class="text-sm font-medium text-gray-800 truncate"
+                  x-text="fileName">{{ file.name if file else '' }}</span>
+            <div x-cloak x-show="mode === 'create'" class="flex items-center">
+                <input type="text" x-model="baseName" value="{{ base_name }}"
+                    spellcheck="false" autocapitalize="off" autocorrect="off"
+                    class="w-48 px-3 py-1.5 rounded-l-lg border border-gray-200 text-sm text-gray-800 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition">
+                <span class="px-3 py-1.5 rounded-r-lg border border-l-0 border-gray-200 bg-gray-50 text-sm text-gray-500">.html</span>
+            </div>
             <span x-cloak x-show="dirty"
                   class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
                 {{ 'editor_unsaved' | t }}
@@ -48,16 +60,18 @@
 
         <div class="flex-1"></div>
 
-        {% if mode == 'edit' %}
-        <button type="button" @click="save()" :disabled="saving || readonlyReason || !baseRevision"
+        <button type="button" @click="save()" :disabled="saving || readonlyReason || !canSave"
             class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition hover:shadow-lg hover:shadow-purple-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
             {{ 'save' | t }}
         </button>
-        {% endif %}
 
         <div class="flex items-center gap-2 pl-2 text-xs border-l border-gray-100">
+            {# A bare "?lang=xx" would drop the rest of the query string, and in
+               create mode that string is the draft's whole state: the folder the
+               file will land in and the name it will take. #}
             {% for code, name in LANGUAGES.items() %}
-            <a href="?lang={{ code }}"
+            {% set target = dict({'folder_id': folder_id, 'name': base_name} if mode == 'create' else request.view_args or {}, lang=code) %}
+            <a href="{{ url_for(request.endpoint, **target) }}"
                class="{{ 'text-purple-600 font-semibold' if lang == code else 'text-gray-400 hover:text-gray-600' }} transition">{{ name }}</a>
             {% endfor %}
         </div>
@@ -125,6 +139,11 @@ function editorPage() {
     return {
         mode: {{ mode | tojson }},
         fileId: {{ (file.id if file else None) | tojson }},
+        // Create mode: the folder the file lands in, and the base name in the
+        // field (the fixed ".html" is not part of either).
+        folderId: {{ folder_id | tojson }},
+        baseName: {{ base_name | tojson }},
+        fileName: {{ (file.name if file else '') | tojson }},
         loading: true,
         readonlyReason: null,
         fatal: false,
@@ -146,6 +165,20 @@ function editorPage() {
             saveFailed: {{ 'editor_save_failed' | t | tojson }},
             sessionExpired: {{ 'editor_session_expired' | t | tojson }},
             discard: {{ 'editor_confirm_discard' | t | tojson }},
+            nameTaken: {{ 'editor_new_name_taken' | t | tojson }},
+            invalidName: {{ 'editor_new_invalid_name' | t | tojson }},
+            newTooLarge: {{ 'editor_new_too_large' | t | tojson }},
+            folderMissing: {{ 'editor_new_folder_missing' | t | tojson }},
+            createFailed: {{ 'editor_new_failed' | t | tojson }},
+        },
+
+        // Saving is available in edit mode once the content - and with it the
+        // revision to save against - has arrived, and in create mode as soon as
+        // there is a name; an empty document is a legitimate thing to create.
+        get canSave() {
+            return this.mode === 'create'
+                ? this.baseName.trim().length > 0
+                : !!this.baseRevision;
         },
 
         get readonlyMessage() {
@@ -272,15 +305,82 @@ function editorPage() {
         },
 
         async save() {
-            if (this.mode !== 'edit' || !this.view) return;
-            if (this.saving || this.readonlyReason || !this.baseRevision) return;
+            if (!this.view) return;
+            if (this.saving || this.readonlyReason || !this.canSave) return;
             this.saving = true;
             // sliceDoc(), never view.state.doc.toString(): toString() hardcodes
             // "\n" and ignores the lineSeparator facet, so it would rewrite
             // every line of a CRLF file and raise nothing while doing it.
             const content = this.view.state.sliceDoc();
-            await this.post(content, this.baseRevision);
+            if (this.mode === 'edit') {
+                await this.post(content, this.baseRevision);
+            } else {
+                await this.create(content);
+            }
             this.saving = false;
+        },
+
+        // Create mode saves to a different endpoint because there is no file to
+        // overwrite yet: the row and its bytes are created here, on the first
+        // save, rather than when the blank editor was opened.
+        async create(content) {
+            this.status = '';
+            this.errorMessage = '';
+            try {
+                const response = await fetch('/files/new', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: this.baseName,
+                        content: content,
+                        folder_id: this.folderId,
+                    }),
+                });
+                if (this.sessionExpired(response)) {
+                    this.status = 'error';
+                    this.errorMessage = this.strings.sessionExpired;
+                    return;
+                }
+                const data = await response.json().catch(() => ({}));
+                if (response.status === 409) {
+                    // The server refuses a taken name instead of quietly
+                    // storing "page_1.html", so the file is not created and the
+                    // user can edit the name field and save again.
+                    this.status = 'error';
+                    this.errorMessage = this.strings.nameTaken;
+                    return;
+                }
+                if (!response.ok || typeof data.revision !== 'string') {
+                    const byReason = {
+                        invalid_name: this.strings.invalidName,
+                        too_large: this.strings.newTooLarge,
+                        folder_not_found: this.strings.folderMissing,
+                    };
+                    this.status = 'error';
+                    this.errorMessage = byReason[data.error] || this.strings.createFailed;
+                    return;
+                }
+                // From here this page *is* the editor for the file just
+                // created. The id, the name, the revision to save against and
+                // the mode have to move together: leaving mode at 'create'
+                // would send the next save to /files/new again and make a
+                // second file.
+                this.mode = 'edit';
+                this.fileId = data.id;
+                this.fileName = data.name;
+                this.baseRevision = data.revision;
+                this.downloadUrl = '/files/' + data.id + '/download';
+                this.dirty = false;
+                this.status = 'saved';
+                // Without this the address bar still reads /files/new, so a
+                // refresh would hand the user another blank editor - and saving
+                // that one would now hit the name that was just taken.
+                history.replaceState(null, '', data.edit_url);
+                document.title = data.name + {{ (' - ' ~ ('site_name' | t)) | tojson }};
+            } catch (error) {
+                this.status = 'error';
+                this.errorMessage = this.strings.createFailed;
+            }
         },
 
         async post(content, baseRevision) {

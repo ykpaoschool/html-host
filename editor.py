@@ -1,8 +1,8 @@
 """In-browser editor for a single uploaded HTML file.
 
-This is phase 2 of the editor work (see ``.claude/plans/editor-implementation.md``
-§3 and §5): open an existing file and write it back in place, so the share links
-already handed out keep working. Creating files (§3.5), version history (§3.6),
+Open an existing file and write it back in place, so the share links already
+handed out keep working, or start a new one (see
+``.claude/plans/editor-implementation.md`` §3 and §5). Version history (§3.6),
 preview and the API read endpoint (§3.8) belong to later phases and deliberately
 have no route here yet.
 
@@ -33,7 +33,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 
-from dashboard import _ensure_upload_dir
+from dashboard import _ensure_upload_dir, _is_valid_component_name, create_file
 from models import File, Folder, db
 
 editor_bp = Blueprint("editor", __name__)
@@ -47,6 +47,31 @@ MAX_EDITABLE_FILE_SIZE = 2 * 1024 * 1024
 
 READONLY_TOO_LARGE = "too_large"
 READONLY_NOT_UTF8 = "not_utf8"
+
+# The editor's filename field holds the base name; ".html" sits next to it as a
+# fixed label that is not part of the value. Both suffixes are stripped off
+# whatever the user typed, so carrying the habit over from the upload dialog and
+# typing "page.html" does not produce "page.html.html".
+HTML_SUFFIXES = (".html", ".htm")
+HTML_SUFFIX = ".html"
+DEFAULT_BASE_NAME = "untitled"
+
+
+def _base_name(name):
+    """The base name behind what the user typed, without an HTML suffix.
+
+    Purely cosmetic normalization of a value that came from a text box: the
+    suffix is stripped off the end and stray surrounding whitespace is dropped.
+    Emptiness is the caller's problem - "page.html" and ".html" are different
+    mistakes and only one of them leaves a name to work with.
+    """
+    base = name.strip()
+    lowered = base.lower()
+    for suffix in HTML_SUFFIXES:
+        if lowered.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base.strip()
 
 
 def _file_or_404(file_id):
@@ -125,24 +150,120 @@ def _write_atomically(full_path, data):
 def new_file():
     """Render a blank editor.
 
-    Only the page: creating the file is ``POST /files/new``, which arrives with
-    phase 3 along with the dashboard's "new file" entry point, so for now this
-    page is reachable by URL only.
+    Nothing is created here - the file appears on the first save, which posts to
+    ``POST /files/new`` below. That is what makes the URL safe to reload, and it
+    is why this page carries the name the user is about to use rather than a
+    row id.
     """
     folder_id = request.args.get("folder_id", type=int)
     # A folder_id that is not the caller's is treated as "root" rather than an
-    # error, matching how create_file() treats it on the upload path.
+    # error, matching how create_file() treats it on the upload path. (The POST
+    # below is deliberately stricter - see the note there.)
     folder = None
     if folder_id:
         folder = Folder.query.filter_by(id=folder_id, user_id=current_user.id).first()
     folder_id = folder.id if folder else None
+
+    # The base name from the dashboard's dialog arrives as ?name=. Stripped the
+    # same way the POST strips it, so the field never shows "page.html" right
+    # next to the fixed ".html" label.
+    base_name = _base_name(request.args.get("name", "")) or DEFAULT_BASE_NAME
 
     return render_template(
         "editor/edit.html",
         mode="create",
         file=None,
         folder_id=folder_id,
+        base_name=base_name,
         back_url=_folder_url(folder_id),
+    )
+
+
+@editor_bp.route("/files/new", methods=["POST"])
+@login_required
+def create_new_file():
+    """Create the file the create-mode editor has been holding.
+
+    Body: ``{name, content, folder_id}``. The order of the checks is part of the
+    contract: a name that is taken is refused *before* anything is written, so a
+    rejected create leaves neither a row nor a directory behind (and in
+    particular no "page_1.html" - see the note on the clash check).
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_request"}), 400
+    name = payload.get("name")
+    content = payload.get("content")
+    folder_id = payload.get("folder_id")
+    if not isinstance(name, str) or not isinstance(content, str):
+        return (
+            jsonify(
+                {
+                    "error": "invalid_request",
+                    "message": "'name' and 'content' are required.",
+                }
+            ),
+            400,
+        )
+
+    # 1. Strip a suffix the user typed anyway, then re-attach the fixed one.
+    base = _base_name(name)
+    final_name = base + HTML_SUFFIX
+
+    # 2. The same validator every other write path uses. An empty base has to be
+    #    refused on its own: ".html" would sail through the validator and leave
+    #    a dot-file in the user's folder.
+    if not base or not _is_valid_component_name(final_name):
+        return jsonify({"error": "invalid_name"}), 400
+
+    # 3. A folder_id that does not resolve is an error here, unlike the upload
+    #    path where create_file() quietly falls back to the root. The editor got
+    #    this id from a folder the user was looking at, so a miss means the
+    #    folder is gone - filing the file at the root instead would put it
+    #    somewhere the user is not looking.
+    folder = None
+    if folder_id not in (None, ""):
+        folder = Folder.query.filter_by(id=folder_id, user_id=current_user.id).first()
+        if folder is None:
+            return jsonify({"error": "folder_not_found"}), 404
+    folder_pk = folder.id if folder else None
+
+    # 4. The editor's own limit - not MAX_CONTENT_LENGTH or MAX_API_CONTENT_SIZE,
+    #    neither of which was written for this path.
+    data = content.encode("utf-8")
+    if len(data) > MAX_EDITABLE_FILE_SIZE:
+        return jsonify({"error": "too_large", "limit": MAX_EDITABLE_FILE_SIZE}), 413
+
+    # 5. create_file() resolves a clash by quietly renaming to "page_1.html".
+    #    That is right for an upload - the bytes exist and have to land
+    #    somewhere - and wrong here, where the user named one file and can
+    #    simply be asked for another name. Checked before anything is created,
+    #    so a 409 writes nothing. The upload path keeps its own behaviour.
+    clash = File.query.filter_by(
+        user_id=current_user.id, folder_id=folder_pk, name=final_name
+    ).first()
+    if clash:
+        return jsonify({"error": "name_taken"}), 409
+
+    # 6. The third caller of create_file(), alongside the web upload handler and
+    #    the JSON API: one filename ruleset and one write path, as its docstring
+    #    requires.
+    file, error = create_file(current_user.id, final_name, data, folder_pk)
+    if error:
+        return jsonify({"error": "invalid_request", "message": error}), 400
+
+    return (
+        jsonify(
+            {
+                "id": file.id,
+                "name": file.name,
+                # 7. The hash the editor will save its next edit against.
+                "revision": _revision(data),
+                "size": len(data),
+                "edit_url": url_for("editor.edit_file", file_id=file.id),
+            }
+        ),
+        201,
     )
 
 
@@ -160,6 +281,9 @@ def edit_file(file_id):
         mode="edit",
         file=file,
         folder_id=file.folder_id,
+        # Unused here, but the name field is in the markup either way (a
+        # successful first save turns the create page into this one).
+        base_name="",
         back_url=_folder_url(file.folder_id),
     )
 

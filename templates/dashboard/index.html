@@ -18,6 +18,10 @@
                 class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
                 + {{ 'new_folder' | t }}
             </button>
+            <button @click="showNewFile = true"
+                class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                + {{ 'editor_new_file' | t }}
+            </button>
             <button @click="$refs.fileInput.click()"
                 class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition hover:shadow-lg hover:shadow-purple-200">
                 {{ 'upload_file' | t }}
@@ -136,6 +140,34 @@
                     :placeholder="'{{ "folder_name" | t }}'">
                 <div class="flex gap-3 justify-end">
                     <button type="button" @click="showNewFolder = false"
+                        class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
+                    <button type="submit"
+                        class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'create' | t }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- New File Modal. A plain GET: it only carries the name and the folder
+         over to the editor, which creates the file on its first save (so
+         backing out of the editor leaves nothing behind). -->
+    <div x-cloak x-show="showNewFile" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" @click.self="showNewFile = false">
+        <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ 'editor_new_file' | t }}</h3>
+            <form method="GET" action="{{ url_for('editor.new_file') }}">
+                <input type="hidden" name="folder_id" value="{{ current_folder.id if current_folder else '' }}">
+                <label class="block text-sm font-medium text-gray-700 mb-2" for="new-file-name">{{ 'editor_new_name' | t }}</label>
+                <div class="flex items-stretch mb-4">
+                    {# The ".html" is a label, not part of the field: the suffix
+                       is fixed and must not be typed or erased. The editor
+                       strips one anyway, in case it gets typed regardless. #}
+                    <input id="new-file-name" type="text" name="name" value="untitled" required
+                        spellcheck="false" autocapitalize="off" autocorrect="off"
+                        class="flex-1 min-w-0 px-4 py-3 rounded-l-xl border border-gray-200 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition">
+                    <span class="flex items-center px-4 rounded-r-xl border border-l-0 border-gray-200 bg-gray-50 text-sm text-gray-500">.html</span>
+                </div>
+                <div class="flex gap-3 justify-end">
+                    <button type="button" @click="showNewFile = false"
                         class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
                     <button type="submit"
                         class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">{{ 'create' | t }}</button>
@@ -359,6 +391,7 @@
 function fileManager() {
     return {
         showNewFolder: false,
+        showNewFile: false,
         showShare: false,
         showRename: false,
         showMove: false,
