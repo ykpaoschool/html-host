@@ -217,10 +217,10 @@ export DATABASE_URL="sqlite:///data.db"
 
 ## MCP Integration
 
-`htmlhost-mcp` is a separate MCP server that lets an agent publish HTML to HTMLHost and manage the
-links it creates. It is a stateless proxy in front of `/api/v1`: it holds no user data, parses no
-credentials, and forwards each caller's own auth headers to HTMLHost, which remains the single place
-that decides who the caller is.
+`htmlhost-mcp` is a separate MCP server that lets an agent publish HTML to HTMLHost, read it back,
+and manage the links it creates. It is a stateless proxy in front of `/api/v1`: it holds no user
+data, parses no credentials, and forwards each caller's own auth headers to HTMLHost, which remains
+the single place that decides who the caller is.
 
 It supports two transports:
 
@@ -312,6 +312,8 @@ claude mcp add htmlhost \
 
 - One tool call carries up to **3 MiB** of content. Larger documents must be published through the
   web UI, which accepts up to 10 MB per file; the error says so.
+- A document is **read back in windows** — 200 lines or 40 KB per call, whichever comes first — so a
+  large file never lands in the model's context in one piece.
 - Agents can publish, update and unshare, but **cannot delete** content. Only share links can be
   revoked, and the content behind them survives.
 - Cross-user access always answers "not found", never "forbidden", so an agent cannot probe for
