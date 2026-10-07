@@ -193,5 +193,9 @@
   "editor_history_restore_confirm": "用这个版本替换当前内容？当前内容会作为一条历史保留下来，可以再回滚。",
   "editor_history_conflict": "该文件已被其他窗口修改，请关闭历史面板后重新打开。",
   "editor_history_load_failed": "无法加载历史版本",
-  "editor_history_retention": "只保留最近 {n} 个版本"
+  "editor_history_retention": "只保留最近 {n} 个版本",
+  "editor_preview": "预览",
+  "editor_preview_draft": "草稿预览",
+  "editor_preview_hint": "显示编辑器里的当前内容，含未保存的改动",
+  "editor_preview_close": "关闭预览"
 }
