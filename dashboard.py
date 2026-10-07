@@ -52,6 +52,55 @@ def _ensure_upload_dir(storage_path):
     return full_path
 
 
+# --- Editor version history: the disk half ---------------------------------
+#
+# Revision blobs live in UPLOAD_FOLDER/.history/<user_id>/<file_id>/<revision id>,
+# a sibling of the user's own directory rather than a child of it:
+# _is_valid_component_name lets a user create a folder literally called
+# ".history", so nesting this inside <user_id>/ would let the two collide.
+# Indexing by file id (not by storage_path) is what keeps a renamed or moved
+# file's history reachable.
+#
+# The FileRevision *rows* need nothing extra - File.revisions cascades, and all
+# four File deletion paths go through the ORM. The blobs are not rows, so these
+# two helpers exist and are called from every one of those paths.
+
+HISTORY_DIRNAME = ".history"
+
+
+def history_dir(user_id, file_id):
+    """The directory holding one file's revision blobs."""
+    return os.path.join(
+        current_app.config["UPLOAD_FOLDER"],
+        HISTORY_DIRNAME,
+        str(user_id),
+        str(file_id),
+    )
+
+
+def delete_file_history(user_id, file_id):
+    """Drop one file's revision blobs, rows or no rows.
+
+    ignore_errors: this runs on the delete paths, where a missing directory is
+    the ordinary case (a file saved once or never has none) and must not turn a
+    delete into a 500.
+    """
+    shutil.rmtree(history_dir(user_id, file_id), ignore_errors=True)
+
+
+def delete_user_history(user_id):
+    """Drop every revision blob belonging to a user.
+
+    admin.delete_user clears UPLOAD_FOLDER/<user_id> with a single rmtree, which
+    cannot reach .history - it is a sibling of that directory, not a child of
+    it, so without this call deleting a user leaks all of their history.
+    """
+    shutil.rmtree(
+        os.path.join(current_app.config["UPLOAD_FOLDER"], HISTORY_DIRNAME, str(user_id)),
+        ignore_errors=True,
+    )
+
+
 def create_file(user_id, name, content, folder_id=None):
     """Create a File row and write its bytes to disk.
 
@@ -256,6 +305,10 @@ def delete_file(file_id):
     if os.path.exists(full_path):
         os.remove(full_path)
 
+    # The revision blobs have to be told about separately, and before the row
+    # goes: nothing points at the directory once this returns.
+    delete_file_history(file.user_id, file.id)
+
     for link in file.share_links:
         db.session.delete(link)
     db.session.delete(file)
@@ -437,6 +490,9 @@ def _delete_folder_recursive(folder):
         full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
         if os.path.exists(full_path):
             os.remove(full_path)
+        # Deleting a folder deletes the files in it, so it has to clear their
+        # history too - this is the path that is easiest to forget.
+        delete_file_history(file.user_id, file.id)
         for link in file.share_links:
             db.session.delete(link)
         db.session.delete(file)

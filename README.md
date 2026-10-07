@@ -10,6 +10,7 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 - Organize files in nested folders, with rename/move sync across disk and database
 - Edit uploaded files in the browser in place, keeping existing share links valid
 - Create new files from the dashboard and write them in the editor
+- Keep the last 10 versions of an edited file, preview any of them, and roll back to one
 - Generate public share links with optional expiration
 - Preview shared HTML in a sandboxed iframe
 - Publish multi-file projects (HTML plus CSS, JS, images) served over real URLs
@@ -389,6 +390,7 @@ The version appears on the login page, so it can be checked without an account, 
 ## How It Works
 
 - Uploaded files are stored on disk under `uploads/<user_id>/...`; folder renames and moves sync both the database and the filesystem
+- Version history lives beside them under `uploads/.history/<user_id>/<file_id>/`, inside the same data volume
 - Folder hierarchy is stored in the database through a self-referential `Folder` model
 - Public sharing uses token-based links such as `/s/<token>`
 - Shared pages are rendered inside a sandboxed iframe for safer previewing
