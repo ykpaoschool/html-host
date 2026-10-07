@@ -80,6 +80,39 @@ class File(db.Model):
     )
 
     share_links = db.relationship("ShareLink", backref="file", lazy=True, cascade="all, delete-orphan")
+    # Newest first, which is the order the editor's history panel lists them in.
+    # "all, delete-orphan" is what keeps FileRevision rows from outliving their
+    # file: all four File deletion paths go through the ORM. The blobs the rows
+    # point at are *not* covered by this - see dashboard.delete_file_history.
+    revisions = db.relationship(
+        "FileRevision",
+        backref="file",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="FileRevision.created_at.desc()",
+    )
+
+
+class FileRevision(db.Model):
+    """A previous version of a File's bytes, kept so an edit can be undone.
+
+    The row points at a blob under UPLOAD_FOLDER/.history/<user_id>/<file_id>/,
+    indexed by file id rather than by path so renaming or moving the file keeps
+    its history (and leaves no directory nothing points at). That directory
+    sits outside the user's own tree - _is_valid_component_name lets a user
+    create a folder literally named ".history", so nesting it inside <user_id>/
+    would let the two collide. See editor-implementation.md 1.4.
+
+    The blob is named after this row's primary key, so it is written after the
+    row has been flushed. Rows are created by editor._apply_content and removed
+    either by the cascade above or by its retention pruning.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    file_id = db.Column(db.Integer, db.ForeignKey("file.id"), nullable=False)
+    storage_path = db.Column(db.String(512), nullable=False)
+    size = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ShareLink(db.Model):

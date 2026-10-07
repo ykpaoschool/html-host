@@ -19,6 +19,7 @@ from api import (
     get_public_base_url,
     set_app_setting,
 )
+from dashboard import delete_file_history, delete_user_history
 from i18n import t
 from models import AppSetting, File, Folder, Project, ShareLink, User, db, generate_mcp_secret
 
@@ -137,6 +138,11 @@ def delete_user(user_id):
     if os.path.exists(user_upload_dir):
         shutil.rmtree(user_upload_dir)
 
+    # .history is a sibling of the user's directory, not a child of it, so the
+    # rmtree above cannot reach it and every deleted user would otherwise leave
+    # their whole revision history behind on disk.
+    delete_user_history(user.id)
+
     # Delete related objects explicitly in the correct order
     # to avoid cascade conflicts with self-referential Folder
     for file in list(user.files):
@@ -183,6 +189,10 @@ def delete_file(file_id):
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
     if os.path.exists(full_path):
         os.remove(full_path)
+
+    # Same as the owner's own delete route: the rows cascade with the File row,
+    # the blobs need telling.
+    delete_file_history(file.user_id, file.id)
 
     for link in file.share_links:
         db.session.delete(link)

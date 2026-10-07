@@ -183,5 +183,15 @@
   "editor_conflict_reload": "Reload",
   "editor_conflict_overwrite": "Overwrite",
   "editor_confirm_discard": "Discard your unsaved changes?",
-  "editor_session_expired": "Your session has expired — reload the page and sign in again"
+  "editor_session_expired": "Your session has expired — reload the page and sign in again",
+  "editor_history": "History",
+  "editor_history_close": "Close",
+  "editor_history_empty": "No earlier versions yet — every save keeps the previous one here.",
+  "editor_history_preview": "Previewing version",
+  "editor_history_back": "Back to editing",
+  "editor_history_restore": "Restore this version",
+  "editor_history_restore_confirm": "Replace the current content with this version? The current content is kept as a version, so this can be undone.",
+  "editor_history_conflict": "The file was changed in another tab. Close the history panel and open it again.",
+  "editor_history_load_failed": "Could not load the version history",
+  "editor_history_retention": "The most recent {n} versions are kept"
 }

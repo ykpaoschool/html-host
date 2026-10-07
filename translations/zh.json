@@ -183,5 +183,15 @@
   "editor_conflict_reload": "重新加载",
   "editor_conflict_overwrite": "仍然覆盖",
   "editor_confirm_discard": "放弃当前未保存的改动？",
-  "editor_session_expired": "登录状态已失效，请刷新页面重新登录"
+  "editor_session_expired": "登录状态已失效，请刷新页面重新登录",
+  "editor_history": "历史",
+  "editor_history_close": "关闭",
+  "editor_history_empty": "还没有历史版本。每次保存都会把上一版留在这里。",
+  "editor_history_preview": "历史版本预览",
+  "editor_history_back": "返回编辑",
+  "editor_history_restore": "回滚到此版本",
+  "editor_history_restore_confirm": "用这个版本替换当前内容？当前内容会作为一条历史保留下来，可以再回滚。",
+  "editor_history_conflict": "该文件已被其他窗口修改，请关闭历史面板后重新打开。",
+  "editor_history_load_failed": "无法加载历史版本",
+  "editor_history_retention": "只保留最近 {n} 个版本"
 }

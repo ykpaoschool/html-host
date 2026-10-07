@@ -65,6 +65,13 @@
             {{ 'save' | t }}
         </button>
 
+        {# Edit mode only: a file that does not exist yet has no revisions. #}
+        <button type="button" x-cloak x-show="mode === 'edit' && !fatal" @click="toggleHistory()"
+            class="px-3 py-2 rounded-xl border text-sm font-medium transition"
+            :class="showHistory ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
+            {{ 'editor_history' | t }}
+        </button>
+
         <div class="flex items-center gap-2 pl-2 text-xs border-l border-gray-100">
             {# A bare "?lang=xx" would drop the rest of the query string, and in
                create mode that string is the draft's whole state: the folder the
@@ -100,12 +107,75 @@
 
     <!-- Editor. Kept mounted (never display:none) so CodeMirror always has a
          sized element to measure when it attaches. -->
-    <div class="flex-1 min-h-0 relative" x-show="!fatal">
-        <div x-cloak x-show="loading"
-             class="absolute inset-0 z-10 flex items-center justify-center bg-white text-sm text-gray-400">
-            {{ 'editor_loading' | t }}
+    <div class="flex-1 min-h-0 flex" x-show="!fatal">
+        <div class="flex-1 min-w-0 relative">
+            <div x-cloak x-show="loading"
+                 class="absolute inset-0 z-10 flex items-center justify-center bg-white text-sm text-gray-400">
+                {{ 'editor_loading' | t }}
+            </div>
+            <div x-ref="host" class="h-full"></div>
+
+            <!-- A revision, shown read-only on top of the draft. <template x-if>
+                 rather than x-show so the view is really torn down when it
+                 closes, and it covers rather than replaces: the draft and its
+                 unsaved state are never touched, which is what makes previewing
+                 a version safe in the middle of editing. -->
+            <template x-if="previewOpen">
+                <div class="absolute inset-0 z-20 flex flex-col bg-white">
+                    <div class="flex-shrink-0 flex items-center gap-3 px-4 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+                        <span class="font-medium">{{ 'editor_history_preview' | t }}</span>
+                        <span class="truncate" x-text="previewLabel"></span>
+                        <div class="flex-1"></div>
+                        <button type="button" @click="closePreview()"
+                            class="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium hover:bg-amber-100 transition">
+                            {{ 'editor_history_back' | t }}
+                        </button>
+                        <button type="button" @click="restore()" :disabled="restoring"
+                            class="px-3 py-1.5 rounded-lg text-white text-xs font-semibold gradient-btn transition disabled:opacity-50 disabled:cursor-not-allowed">
+                            {{ 'editor_history_restore' | t }}
+                        </button>
+                    </div>
+                    <div x-ref="previewHost" class="flex-1 min-h-0"
+                         x-init="$nextTick(() => mountPreview())"></div>
+                </div>
+            </template>
         </div>
-        <div x-ref="host" class="h-full"></div>
+
+        <!-- Version history. A column rather than an overlay: the editor stays
+             readable while the list is open, and CodeMirror re-measures itself
+             when the column takes its width. -->
+        <aside x-cloak x-show="showHistory"
+               class="w-72 flex-shrink-0 flex flex-col bg-gray-50 border-l border-gray-200">
+            <div class="flex-shrink-0 flex items-center justify-between px-4 h-11 border-b border-gray-200">
+                <span class="text-sm font-medium text-gray-700">{{ 'editor_history' | t }}</span>
+                <button type="button" @click="toggleHistory()" title="{{ 'editor_history_close' | t }}"
+                    class="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto">
+                <p x-cloak x-show="historyLoading" class="px-4 py-3 text-xs text-gray-400">{{ 'editor_loading' | t }}</p>
+                <p x-cloak x-show="historyError" class="px-4 py-3 text-xs text-red-600" x-text="historyError"></p>
+                <p x-cloak x-show="!historyLoading && !historyError && revisions.length === 0"
+                   class="px-4 py-3 text-xs text-gray-400 leading-relaxed">{{ 'editor_history_empty' | t }}</p>
+                <ul>
+                    <template x-for="revision in revisions" :key="revision.id">
+                        <li>
+                            <button type="button" @click="openRevision(revision)"
+                                class="w-full px-4 py-2.5 text-left border-b border-gray-100 hover:bg-white transition"
+                                :class="previewRevision && previewRevision.id === revision.id ? 'bg-white' : ''">
+                                <span class="block text-xs text-gray-700" x-text="formatTime(revision.created_at)"></span>
+                                <span class="block text-xs text-gray-400" x-text="formatSize(revision.size)"></span>
+                            </button>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <p class="flex-shrink-0 px-4 py-2 border-t border-gray-200 text-xs text-gray-400"
+               x-text="retentionNote()"></p>
+        </aside>
     </div>
 
     <!-- Save conflict: another tab (or another window) wrote this file after
@@ -156,6 +226,17 @@ function editorPage() {
         showConflict: false,
         conflictRevision: null,
         view: null,
+        // Version history: the panel, and the read-only view of one revision.
+        showHistory: false,
+        revisions: [],
+        retention: 10,
+        historyLoading: false,
+        historyError: '',
+        previewOpen: false,
+        previewRevision: null,
+        previewText: '',
+        previewView: null,
+        restoring: false,
         strings: {
             tooLarge: {{ 'editor_readonly_too_large' | t | tojson }},
             notUtf8: {{ 'editor_readonly_not_utf8' | t | tojson }},
@@ -170,6 +251,10 @@ function editorPage() {
             newTooLarge: {{ 'editor_new_too_large' | t | tojson }},
             folderMissing: {{ 'editor_new_folder_missing' | t | tojson }},
             createFailed: {{ 'editor_new_failed' | t | tojson }},
+            historyLoadFailed: {{ 'editor_history_load_failed' | t | tojson }},
+            historyConflict: {{ 'editor_history_conflict' | t | tojson }},
+            historyRestoreConfirm: {{ 'editor_history_restore_confirm' | t | tojson }},
+            historyRetention: {{ 'editor_history_retention' | t | tojson }},
         },
 
         // Saving is available in edit mode once the content - and with it the
@@ -195,6 +280,13 @@ function editorPage() {
 
         get fatalHint() {
             return this.fatal === 'file_moved' ? this.strings.fileMovedHint : '';
+        },
+
+        get previewLabel() {
+            const revision = this.previewRevision;
+            return revision
+                ? this.formatTime(revision.created_at) + ' · ' + this.formatSize(revision.size)
+                : '';
         },
 
         // True when the answer did not come from the app's JSON endpoints -
@@ -413,6 +505,9 @@ function editorPage() {
                 this.baseRevision = data.revision;
                 this.dirty = false;
                 this.status = 'saved';
+                // Keep an open panel honest: this save just added a version to
+                // the list it is showing.
+                if (this.showHistory) this.loadHistory();
             } catch (error) {
                 this.status = 'error';
                 this.errorMessage = this.strings.saveFailed;
@@ -432,6 +527,178 @@ function editorPage() {
             this.showConflict = false;
             this.dirty = false;
             await this.load();
+        },
+
+        // --- Version history -------------------------------------------------
+
+        formatTime(value) {
+            if (!value) return '';
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+        },
+
+        // Rough on purpose: the point of showing a size is "this is the version
+        // from before this morning's edits", not an exact byte count.
+        formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        // The {n} placeholder is filled in here rather than by i18n.t(), which
+        // only substitutes on the server.
+        retentionNote() {
+            return this.strings.historyRetention.replace('{n}', String(this.retention));
+        },
+
+        toggleHistory() {
+            this.showHistory = !this.showHistory;
+            if (this.showHistory) {
+                this.loadHistory();
+            } else {
+                this.closePreview();
+            }
+        },
+
+        async loadHistory() {
+            this.historyLoading = true;
+            this.historyError = '';
+            try {
+                const response = await fetch('/files/' + this.fileId + '/history');
+                if (this.sessionExpired(response)) {
+                    this.historyError = this.strings.sessionExpired;
+                    return;
+                }
+                const data = await response.json().catch(() => null);
+                if (!response.ok || !data || !Array.isArray(data.revisions)) {
+                    this.historyError = this.strings.historyLoadFailed;
+                    return;
+                }
+                this.revisions = data.revisions;
+                this.retention = data.retention || 10;
+            } catch (error) {
+                this.historyError = this.strings.historyLoadFailed;
+            } finally {
+                this.historyLoading = false;
+            }
+        },
+
+        async openRevision(revision) {
+            this.historyError = '';
+            try {
+                const response = await fetch('/files/' + this.fileId + '/history/' + revision.id);
+                if (this.sessionExpired(response)) {
+                    this.historyError = this.strings.sessionExpired;
+                    return;
+                }
+                const data = await response.json().catch(() => null);
+                if (!response.ok || !data || typeof data.content !== 'string') {
+                    this.historyError = this.strings.historyLoadFailed;
+                    return;
+                }
+                this.previewText = data.content;
+                this.previewRevision = revision;
+                if (this.previewOpen) {
+                    // Clicking a second revision: the <template x-if> is already
+                    // mounted and will not re-run, so the view is swapped here.
+                    this.mountPreview();
+                } else {
+                    this.previewOpen = true;
+                }
+            } catch (error) {
+                this.historyError = this.strings.historyLoadFailed;
+            }
+        },
+
+        // Called from the preview host's x-init, so the element CodeMirror gets
+        // as its parent is in the document by the time this runs.
+        mountPreview() {
+            const CM = window.HtmlHostEditor;
+            if (this.previewView) {
+                this.previewView.destroy();
+                this.previewView = null;
+            }
+            const text = this.previewText;
+            this.previewView = new CM.EditorView({
+                state: CM.EditorState.create({
+                    doc: text,
+                    extensions: [
+                        CM.basicSetup,
+                        CM.html(),
+                        // The same facet as the editor: the stored bytes kept
+                        // their own line separator, which is what lets a
+                        // restored file come back byte-identical.
+                        CM.EditorState.lineSeparator.of(text.includes('\r\n') ? '\r\n' : '\n'),
+                        // Read-only. Restoring is the only way out of here, so
+                        // the panel cannot quietly become a second editor.
+                        CM.EditorView.editable.of(false),
+                    ],
+                }),
+                parent: this.$refs.previewHost,
+            });
+        },
+
+        closePreview() {
+            if (this.previewView) {
+                this.previewView.destroy();
+                this.previewView = null;
+            }
+            this.previewOpen = false;
+            this.previewText = '';
+            this.previewRevision = null;
+        },
+
+        async restore() {
+            if (!this.previewRevision || this.restoring) return;
+            // There is no merging a draft with an older version, so the draft
+            // has to go - twice asked, because it is the one thing here that
+            // cannot be recovered afterwards.
+            if (this.dirty && !window.confirm(this.strings.discard)) return;
+            if (!window.confirm(this.strings.historyRestoreConfirm)) return;
+
+            this.restoring = true;
+            this.historyError = '';
+            try {
+                const response = await fetch(
+                    '/files/' + this.fileId + '/history/' + this.previewRevision.id + '/restore',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ base_revision: this.baseRevision }),
+                    }
+                );
+                if (this.sessionExpired(response)) {
+                    this.historyError = this.strings.sessionExpired;
+                    return;
+                }
+                const data = await response.json().catch(() => ({}));
+                if (response.status === 409) {
+                    // The file moved on while the panel was open. No "overwrite
+                    // anyway" here: the point of restoring is to get back to
+                    // bytes that are known, so the list is reloaded instead.
+                    this.historyError = this.strings.historyConflict;
+                    await this.loadHistory();
+                    return;
+                }
+                if (!response.ok || typeof data.revision !== 'string') {
+                    this.historyError = data.message || this.strings.saveFailed;
+                    return;
+                }
+                // The restore was an ordinary save, so the editor reloads from
+                // the server rather than from the bytes the panel fetched: the
+                // restored file is the server's, and it now has a revision of
+                // what it replaced.
+                this.baseRevision = data.revision;
+                this.closePreview();
+                this.dirty = false;
+                await this.load();
+                await this.loadHistory();
+                this.status = 'saved';
+            } catch (error) {
+                this.historyError = this.strings.saveFailed;
+            } finally {
+                this.restoring = false;
+            }
         },
     }
 }
