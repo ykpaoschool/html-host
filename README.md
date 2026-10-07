@@ -8,6 +8,8 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 
 - Upload and manage `.html` / `.htm` files
 - Organize files in nested folders, with rename/move sync across disk and database
+- Edit uploaded files in the browser in place, keeping existing share links valid
+- Create new files from the dashboard and write them in the editor
 - Generate public share links with optional expiration
 - Preview shared HTML in a sandboxed iframe
 - Publish multi-file projects (HTML plus CSS, JS, images) served over real URLs
@@ -414,6 +416,7 @@ venv/bin/pip install -r requirements.txt
 ## Notes
 
 - Only `.html` and `.htm` files are accepted
+- Online editing needs a UTF-8 encoded file of at most 2 MB; larger or differently encoded files can still be uploaded, downloaded and shared
 - The default database is SQLite and is created automatically on startup
 - There is currently no dedicated test suite or lint configuration in this repository
 
