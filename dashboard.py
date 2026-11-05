@@ -1,5 +1,4 @@
 import os
-import secrets
 import shutil
 
 from flask import (
@@ -12,9 +11,10 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 
 from i18n import t
-from models import File, Folder, ShareLink, db
+from models import File, Folder, ShareLink, db, mint_share_token
 from projects import _parse_expiry
 
 dashboard_bp = Blueprint("dashboard", __name__)
@@ -507,7 +507,11 @@ def _delete_folder_recursive(folder):
 def create_share(file_id):
     file = File.query.filter_by(id=file_id, user_id=current_user.id).first_or_404()
 
-    token = secrets.token_urlsafe(32)
+    token, error = mint_share_token(ShareLink, request.form.get("custom_token"))
+    if error:
+        key = "share_token_taken" if error == "taken" else "share_token_invalid"
+        return jsonify({"error": t(key)}), 409 if error == "taken" else 400
+
     expires_at = _parse_expiry(request.form.get("expires_at"))
     require_login = request.form.get("require_login") == "1"
 
@@ -518,7 +522,13 @@ def create_share(file_id):
         require_login=require_login,
     )
     db.session.add(link)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Lost the race between the advisory check and the insert; the token
+        # column's UNIQUE constraint is the real arbiter.
+        db.session.rollback()
+        return jsonify({"error": t("share_token_taken")}), 409
 
     share_url = url_for("share.view", token=token, _external=True)
     return jsonify({"url": share_url, "token": token, "id": link.id})

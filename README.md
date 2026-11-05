@@ -12,7 +12,7 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 - Create new files from the dashboard and write them in the editor
 - Keep the last 10 versions of an edited file, preview any of them, and roll back to one
 - Preview the unsaved draft in a sandboxed frame before saving it
-- Generate public share links with optional expiration
+- Generate public share links with optional expiration and an optional custom URL slug
 - Preview shared HTML in a sandboxed iframe
 - Publish multi-file projects (HTML plus CSS, JS, images) served over real URLs
 - JSON API at `/api/v1` for scripts and CI, with personal access tokens

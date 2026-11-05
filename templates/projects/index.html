@@ -227,6 +227,18 @@
                 </div>
             </div>
 
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">{{ 'custom_link' | t }}</label>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400 shrink-0">/p/</span>
+                    <input type="text" x-model="customToken" maxlength="64"
+                        placeholder="{{ 'custom_link_placeholder' | t }}"
+                        class="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:border-purple-400 outline-none transition text-sm">
+                </div>
+                <p class="mt-1 text-xs text-gray-400">{{ 'custom_link_hint' | t }}</p>
+                <p class="mt-1 text-xs text-amber-600">{{ 'custom_link_warning' | t }}</p>
+            </div>
+
             <div class="flex gap-3 justify-end">
                 <button @click="showShare = false"
                     class="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition">{{ 'cancel' | t }}</button>
@@ -289,6 +301,7 @@ function projectManager() {
         expiryType: 'never',
         expiryDate: '',
         accessType: 'anonymous',
+        customToken: '',
         deleteProjectId: null,
         deleteMessage: '',
 
@@ -359,6 +372,7 @@ function projectManager() {
             this.expiryType = 'never';
             this.expiryDate = '';
             this.accessType = 'anonymous';
+            this.customToken = '';
             this.showShare = true;
         },
 
@@ -369,6 +383,9 @@ function projectManager() {
             }
             if (this.accessType === 'login') {
                 formData.append('require_login', '1');
+            }
+            if (this.customToken.trim()) {
+                formData.append('custom_token', this.customToken.trim());
             }
             fetch('/projects/' + this.shareProjectId + '/share', { method: 'POST', body: formData })
                 .then(r => r.json())
