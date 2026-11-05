@@ -831,6 +831,7 @@ def register_tools(server, config):
         expires_in: Optional[ExpiresIn] = None,
         expires_at: Optional[str] = None,
         require_login: bool = False,
+        token: Optional[str] = None,
     ) -> str:
         """Mint an additional share link for content that is already published.
 
@@ -838,19 +839,23 @@ def register_tools(server, config):
         for example a public link that lasts a day alongside a permanent one -
         or to share something published earlier that has no link yet.
 
+        Pass ``token`` to choose the URL slug yourself: lowercase letters,
+        digits and hyphens, 5-64 characters. Slugs are first come, first
+        served, and a taken one comes back as TOKEN_TAKEN rather than being
+        silently replaced by a random link.
+
         Prefer ``expires_in`` over ``expires_at``; it cannot be miscalculated.
         """
         api = _Api(client, config, ctx)
-        link = await api(
-            "POST",
-            "/shares",
-            json={
-                "target_type": target_type,
-                "target_id": target_id,
-                "require_login": require_login,
-                **_expiry_fields(expires_in, expires_at),
-            },
-        )
+        payload = {
+            "target_type": target_type,
+            "target_id": target_id,
+            "require_login": require_login,
+            **_expiry_fields(expires_in, expires_at),
+        }
+        if token is not None:
+            payload["token"] = token
+        link = await api("POST", "/shares", json=payload)
         return _share_detail(link)
 
     @_tool(server)
