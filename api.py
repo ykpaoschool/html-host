@@ -14,7 +14,8 @@ Both are gated by ``User.mcp_enabled``: a single rule for the whole plane.
 Error contract: every failure is ``{"error": <CODE>, "message": <English>}``,
 never HTML. Codes: UNAUTHORIZED, MCP_DISABLED, USER_NOT_REGISTERED, NOT_FOUND,
 METHOD_NOT_ALLOWED, INVALID_REQUEST, INVALID_PATH, DUPLICATE_PATH,
-UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, PAYLOAD_TOO_LARGE, CONTENT_TOO_LARGE,
+UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, INVALID_TOKEN, TOKEN_TAKEN,
+PAYLOAD_TOO_LARGE, CONTENT_TOO_LARGE,
 CONTENT_NOT_UTF8, TOO_MANY_FILES, PROJECT_TOO_LARGE.
 
 Two deliberate absences: there is **no endpoint that deletes content** (files
@@ -26,7 +27,6 @@ probe cannot tell "not yours" from "does not exist".
 import hmac
 import logging
 import os
-import secrets
 from datetime import datetime, timezone
 
 from flask import (
@@ -37,6 +37,8 @@ from flask import (
     request,
     url_for,
 )
+
+from sqlalchemy.exc import IntegrityError
 
 from dashboard import _ensure_upload_dir, create_file
 from models import (
@@ -54,6 +56,7 @@ from models import (
     hash_api_token,
     hash_mcp_secret,
     is_well_formed_api_token,
+    mint_share_token,
 )
 from projects import (
     MAX_FILE_SIZE,
@@ -982,8 +985,9 @@ def project_file_delete(project_id, rel_path):
 def shares_create():
     """Mint a share link.
 
-    Body: {target_type, target_id, expires_in?|expires_at?, require_login?}.
+    Body: {target_type, target_id, expires_in?|expires_at?, require_login?, token?}.
     ``require_login`` defaults to False (public), matching the Web UI.
+    ``token`` is an optional custom URL slug; omit it to get a random one.
     """
     payload = _json_body()
     target_type = payload.get("target_type")
@@ -1001,7 +1005,20 @@ def shares_create():
     else:
         _project_or_404(target_id, g.api_user.id)
 
-    token = secrets.token_urlsafe(32)
+    token, error = mint_share_token(
+        ShareLink if target_type == "file" else ProjectShareLink,
+        payload.get("token"),
+    )
+    if error == "invalid":
+        raise ApiError(
+            "INVALID_TOKEN",
+            "'token' may contain only lowercase ASCII letters, digits and "
+            "hyphens, must be 5-64 characters long, and must start and end "
+            "with a letter or digit.",
+        )
+    if error == "taken":
+        raise ApiError("TOKEN_TAKEN", "That share token is already in use.", 409)
+
     expires_at = _resolve_expiry(payload)
     require_login = _optional_bool(payload, "require_login")
 
@@ -1020,7 +1037,13 @@ def shares_create():
             require_login=require_login,
         )
     db.session.add(link)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Lost the race between the advisory check and the insert; the token
+        # column's UNIQUE constraint is the real arbiter.
+        db.session.rollback()
+        raise ApiError("TOKEN_TAKEN", "That share token is already in use.", 409)
 
     return jsonify(_share_payload(link, target_type)), 201
 

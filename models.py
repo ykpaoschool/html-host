@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import datetime, timezone
 
@@ -131,6 +132,61 @@ def content_revision(data):
     bytes on disk, never reconstructed from a size or a timestamp.
     """
     return hashlib.sha256(data).hexdigest()
+
+
+# --- Share tokens -----------------------------------------------------------
+#
+# A share link is addressed by its token (/s/<token>, /p/<token>), and for an
+# anonymous link that token is the only credential protecting the content.
+# Generated tokens are 43 urlsafe characters; users may supply their own
+# instead, trading that unguessability for a readable URL. Every place that
+# mints a link goes through mint_share_token() so the Web UI, the JSON API and
+# the MCP plane agree on the rules.
+
+SHARE_TOKEN_MIN_LENGTH = 5
+SHARE_TOKEN_MAX_LENGTH = 64
+
+# Lowercase ASCII only. The value must survive as a single URL path segment;
+# non-ASCII would percent-encode into characters nobody can read or retype.
+_SHARE_TOKEN_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
+
+
+def normalize_share_token(raw):
+    """Return the canonical custom token, or None if it cannot be used.
+
+    Lowercased rather than rejected for upper case: SQLite compares TEXT
+    case-sensitively, so "Math" and "math" would otherwise become two
+    distinct, confusable links.
+    """
+    if not isinstance(raw, str):
+        return None
+    token = raw.strip().lower()
+    if not SHARE_TOKEN_MIN_LENGTH <= len(token) <= SHARE_TOKEN_MAX_LENGTH:
+        return None
+    return token if _SHARE_TOKEN_RE.fullmatch(token) else None
+
+
+def mint_share_token(model, requested):
+    """Return ``(token, error)`` for a new link of ``model``.
+
+    ``model`` is ShareLink or ProjectShareLink. Uniqueness is per table, which
+    is correct because the two families live under different URL prefixes
+    (/s/ and /p/). An empty ``requested`` yields a random token; otherwise the
+    value is validated and collision-checked, and ``error`` is ``"invalid"``
+    or ``"taken"``.
+
+    The collision check is advisory: two concurrent creations can both pass
+    it, so callers must also catch IntegrityError on commit.
+    """
+    if requested is None or not str(requested).strip():
+        return secrets.token_urlsafe(32), None
+
+    token = normalize_share_token(requested)
+    if token is None:
+        return None, "invalid"
+    if model.query.filter_by(token=token).first() is not None:
+        return None, "taken"
+    return token, None
 
 
 class ShareLink(db.Model):

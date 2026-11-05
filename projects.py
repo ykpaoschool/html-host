@@ -1,6 +1,5 @@
 import io
 import os
-import secrets
 import shutil
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -17,9 +16,10 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 
 from i18n import t
-from models import Project, ProjectFile, ProjectShareLink, db
+from models import Project, ProjectFile, ProjectShareLink, db, mint_share_token
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -364,7 +364,13 @@ def create_share(project_id):
     """Create a ProjectShareLink. Returns JSON {url, token, id}."""
     project = _project_or_404(project_id)
 
-    token = secrets.token_urlsafe(32)
+    token, error = mint_share_token(
+        ProjectShareLink, request.form.get("custom_token")
+    )
+    if error:
+        key = "share_token_taken" if error == "taken" else "share_token_invalid"
+        return jsonify({"error": t(key)}), 409 if error == "taken" else 400
+
     expires_at = request.form.get("expires_at")
     expires_at = _parse_expiry(expires_at)
     require_login = request.form.get("require_login") == "1"
@@ -376,7 +382,13 @@ def create_share(project_id):
         require_login=require_login,
     )
     db.session.add(link)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Lost the race between the advisory check and the insert; the token
+        # column's UNIQUE constraint is the real arbiter.
+        db.session.rollback()
+        return jsonify({"error": t("share_token_taken")}), 409
 
     share_url = url_for("projects.view", token=token, _external=True)
     return jsonify({"url": share_url, "token": token, "id": link.id})
