@@ -27,6 +27,7 @@ probe cannot tell "not yours" from "does not exist".
 import hmac
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 
 from flask import (
@@ -908,6 +909,26 @@ def project_get(project_id):
     return jsonify(_project_payload(project, include_files=True))
 
 
+def _write_file_atomically(full_path, data):
+    """Write ``data`` to ``full_path`` without exposing a partial file.
+
+    The bytes go to a temp file in the same directory first, then
+    ``os.replace`` swaps it in. A concurrent raw-file request therefore reads
+    either the old content or the new one, never a truncated write.
+    """
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(full_path), prefix=".tmp-", suffix=".part"
+    )
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp_path, full_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
 @api_bp.route("/projects/<int:project_id>/files", methods=["PUT"])
 def project_files_upsert(project_id):
     """Add or overwrite project files by path. Body: {files:[{path, content}]}.
@@ -924,6 +945,7 @@ def project_files_upsert(project_id):
         existing_sizes={path: pf.size or 0 for path, pf in existing.items()},
     )
 
+    now = datetime.now(timezone.utc)
     for rel_path, data in staged:
         pf = existing.get(rel_path)
         storage_path = (
@@ -932,10 +954,10 @@ def project_files_upsert(project_id):
             else _get_project_storage_path(project.user_id, project.id, rel_path)
         )
         full_path = _ensure_project_dir(storage_path)
-        with open(full_path, "wb") as fh:
-            fh.write(data)
+        _write_file_atomically(full_path, data)
         if pf:
             pf.size = len(data)
+            pf.uploaded_at = now
         else:
             db.session.add(
                 ProjectFile(
@@ -947,7 +969,7 @@ def project_files_upsert(project_id):
             )
 
     # Touching a child row does not bump the parent's onupdate timestamp.
-    project.updated_at = datetime.now(timezone.utc)
+    project.updated_at = now
     db.session.commit()
 
     return jsonify(_project_payload(project, include_files=True))

@@ -1,6 +1,8 @@
 import io
 import os
 import shutil
+import time
+import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 
@@ -164,6 +166,116 @@ def _validate_file_entry(rel_path, size, total_so_far, count_so_far):
     return None, new_total
 
 
+def _stage_uploaded_files(uploaded, paths=None):
+    """Validate uploaded files into ``(staged, total, error)``.
+
+    ``staged`` is a list of ``(rel_path, content_bytes)``. ``paths`` optionally
+    supplies a project-relative path per uploaded entry (positional); a blank
+    entry falls back to the upload's own filename. ``error`` is ``None`` or a
+    ``(message, path_or_None)`` tuple already passed through ``t()``.
+
+    Nothing is written to disk or the DB here, so a validation failure leaves
+    the project untouched.
+    """
+    entries = list(uploaded or [])
+    if not any(f and f.filename for f in entries):
+        return [], 0, (t("project_no_files"), None)
+    if paths is not None and len(paths) != len(entries):
+        return [], 0, (t("project_update_paths_mismatch"), None)
+
+    staged = []
+    total = 0
+    seen_paths = set()
+    for index, f in enumerate(entries):
+        if not f or not f.filename:
+            continue
+        rel_path = ""
+        if paths is not None:
+            rel_path = (paths[index] or "").strip()
+        rel_path = rel_path or f.filename
+        content = f.read()
+        err, total = _validate_file_entry(rel_path, len(content), total, len(staged))
+        if err:
+            return [], 0, (err, rel_path)
+        norm = _normalize_rel_path(rel_path)
+        if norm in seen_paths:
+            return [], 0, (t("project_duplicate_path", path=norm), None)
+        seen_paths.add(norm)
+        staged.append((norm, content))
+    return staged, total, None
+
+
+def _stage_zip(uploaded):
+    """Validate a ZIP upload into ``(staged, total, error)``, like
+    ``_stage_uploaded_files``.
+
+    Entries go through the same zip-slip, whitelist and limit checks as a new
+    project upload; nothing touches disk until the caller applies it.
+    """
+    if not uploaded or not uploaded.filename:
+        return [], 0, (t("project_no_files"), None)
+    if not uploaded.filename.lower().endswith(".zip"):
+        return [], 0, (t("project_zip_invalid"), None)
+
+    # Read the zip into memory (capped by MAX_CONTENT_LENGTH at the WSGI layer).
+    zip_bytes = uploaded.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        return [], 0, (t("project_zip_invalid"), None)
+
+    staged = []
+    total = 0
+    seen_paths = set()
+    try:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue  # directory entries are recreated on demand
+            # Reject Zip Slip: absolute paths or '..' segments.
+            norm = _normalize_rel_path(info.filename)
+            if norm is None:
+                return [], 0, (t("project_invalid_path"), info.filename)
+            if not _allowed_extension(norm):
+                return [], 0, (t("project_invalid_extension", path=norm), None)
+            size = info.file_size
+            if size > MAX_FILE_SIZE:
+                return [], 0, (
+                    t("project_upload_too_large", limit=MAX_FILE_SIZE // (1024 * 1024)),
+                    None,
+                )
+            if len(staged) + 1 > MAX_PROJECT_FILES:
+                return [], 0, (
+                    t("project_upload_too_many", limit=MAX_PROJECT_FILES),
+                    None,
+                )
+            new_total = total + size
+            if new_total > MAX_PROJECT_SIZE:
+                return [], 0, (
+                    t("project_upload_too_large", limit=MAX_PROJECT_SIZE // (1024 * 1024)),
+                    None,
+                )
+            total = new_total
+            if norm in seen_paths:
+                return [], 0, (t("project_duplicate_path", path=norm), None)
+            seen_paths.add(norm)
+            staged.append((norm, zf.read(info)))
+    finally:
+        zf.close()
+
+    if not staged:
+        return [], 0, (t("project_no_files"), None)
+    return staged, total, None
+
+
+def _project_upload_error(error):
+    """Turn a ``(message, path)`` stemming error into a JSON 400 response."""
+    message, path = error
+    body = {"error": message}
+    if path:
+        body["path"] = path
+    return jsonify(body), 400
+
+
 @projects_bp.route("/projects/upload", methods=["POST"])
 @login_required
 def upload_files():
@@ -175,27 +287,9 @@ def upload_files():
     if not name:
         return jsonify({"error": t("project_name_required")}), 400
 
-    uploaded = request.files.getlist("files")
-    if not uploaded or not any(f and f.filename for f in uploaded):
-        return jsonify({"error": t("project_no_files")}), 400
-
-    # Stage entries (validate before writing anything to disk/DB).
-    staged = []  # list of (rel_path, content_bytes)
-    total = 0
-    seen_paths = set()
-    for f in uploaded:
-        if not f or not f.filename:
-            continue
-        content = f.read()
-        size = len(content)
-        err, total = _validate_file_entry(f.filename, size, total, len(staged))
-        if err:
-            return jsonify({"error": err, "path": f.filename}), 400
-        norm = _normalize_rel_path(f.filename)
-        if norm in seen_paths:
-            return jsonify({"error": t("project_duplicate_path", path=norm)}), 400
-        seen_paths.add(norm)
-        staged.append((norm, content))
+    staged, total, error = _stage_uploaded_files(request.files.getlist("files"))
+    if error:
+        return _project_upload_error(error)
 
     project = _persist_project(current_user.id, name, staged)
     return jsonify(
@@ -219,60 +313,9 @@ def upload_zip():
     if not name:
         return jsonify({"error": t("project_name_required")}), 400
 
-    uploaded = request.files.get("file")
-    if not uploaded or not uploaded.filename:
-        return jsonify({"error": t("project_no_files")}), 400
-
-    if not uploaded.filename.lower().endswith(".zip"):
-        return jsonify({"error": t("project_zip_invalid")}), 400
-
-    # Read the zip into memory (capped by MAX_CONTENT_LENGTH at the WSGI layer).
-    zip_bytes = uploaded.read()
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    except zipfile.BadZipFile:
-        return jsonify({"error": t("project_zip_invalid")}), 400
-
-    # Stage entries with zip-slip + whitelist + limits validation.
-    staged = []  # list of (rel_path, content_bytes)
-    total = 0
-    seen_paths = set()
-    for info in zf.infolist():
-        if info.is_dir():
-            continue  # directory entries are recreated on demand
-        # Reject Zip Slip: absolute paths or '..' segments.
-        norm = _normalize_rel_path(info.filename)
-        if norm is None:
-            zf.close()
-            return jsonify({"error": t("project_invalid_path"), "path": info.filename}), 400
-        if not _allowed_extension(norm):
-            zf.close()
-            return jsonify({"error": t("project_invalid_extension", path=norm)}), 400
-        size = info.file_size
-        if size > MAX_FILE_SIZE:
-            zf.close()
-            return jsonify(
-                {"error": t("project_upload_too_large", limit=MAX_FILE_SIZE // (1024 * 1024))}
-            ), 400
-        if len(staged) + 1 > MAX_PROJECT_FILES:
-            zf.close()
-            return jsonify({"error": t("project_upload_too_many", limit=MAX_PROJECT_FILES)}), 400
-        new_total = total + size
-        if new_total > MAX_PROJECT_SIZE:
-            zf.close()
-            return jsonify(
-                {"error": t("project_upload_too_large", limit=MAX_PROJECT_SIZE // (1024 * 1024))}
-            ), 400
-        total = new_total
-        if norm in seen_paths:
-            zf.close()
-            return jsonify({"error": t("project_duplicate_path", path=norm)}), 400
-        seen_paths.add(norm)
-        staged.append((norm, zf.read(info)))
-    zf.close()
-
-    if not staged:
-        return jsonify({"error": t("project_no_files")}), 400
+    staged, total, error = _stage_zip(request.files.get("file"))
+    if error:
+        return _project_upload_error(error)
 
     project = _persist_project(current_user.id, name, staged)
     return jsonify(
@@ -283,6 +326,249 @@ def upload_zip():
             "total_size": total,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# In-place project updates.
+#
+# These routes mutate the existing Project row and its storage directory;
+# they never create a second Project and never touch ProjectShareLink, so
+# /p/<token> keeps resolving to the same (now updated) project.
+# ---------------------------------------------------------------------------
+
+_UPDATE_MODES = ("merge", "replace")
+
+
+def _parse_update_mode():
+    """Return the requested update mode, defaulting to 'merge'."""
+    mode = (request.form.get("mode") or "merge").strip().lower()
+    return mode if mode in _UPDATE_MODES else None
+
+
+def _stage_project_update(project, staged, mode):
+    """Check an update against the file set it would leave behind.
+
+    Returns ``(staged, to_delete, error)``. ``to_delete`` holds the
+    ProjectFile rows that ``mode == "replace"`` removes; ``error`` is an
+    already-translated message or None. Limits are applied to the *final*
+    state, not just to the bytes in this request.
+    """
+    staged_map = dict(staged)
+    existing = {pf.path: pf for pf in project.files}
+
+    if mode == "replace":
+        to_delete = [pf for path, pf in existing.items() if path not in staged_map]
+    else:
+        to_delete = []
+
+    # Sizes of the files the update leaves in place, plus the new bytes.
+    # In replace mode nothing that is absent from the upload survives.
+    if mode == "replace":
+        final_sizes = {}
+    else:
+        final_sizes = {
+            path: (pf.size or 0)
+            for path, pf in existing.items()
+            if path not in staged_map
+        }
+    final_sizes.update({path: len(data) for path, data in staged})
+
+    if len(final_sizes) > MAX_PROJECT_FILES:
+        return (
+            None,
+            None,
+            t(
+                "project_update_too_many",
+                count=len(final_sizes),
+                limit=MAX_PROJECT_FILES,
+            ),
+        )
+    total = sum(final_sizes.values())
+    if total > MAX_PROJECT_SIZE:
+        return (
+            None,
+            None,
+            t(
+                "project_update_too_large",
+                size=round(total / (1024 * 1024), 1),
+                limit=MAX_PROJECT_SIZE // (1024 * 1024),
+            ),
+        )
+    if not any(path.lower().endswith((".html", ".htm")) for path in final_sizes):
+        # Without an HTML file the share viewer would 404 even though the
+        # update itself succeeded, so refuse it now and keep the old version.
+        return None, None, t("project_no_index")
+    return staged, to_delete, None
+
+
+def _apply_project_update(project, staged, mode, name=None):
+    """Apply a validated update to the project's directory and DB rows.
+
+    The new file set is built in a sibling staging directory, then swapped in
+    with two renames on the same filesystem; the old directory is only deleted
+    after the DB commit succeeds, and is restored if it does not.
+    """
+    upload_folder = current_app.config["UPLOAD_FOLDER"]
+    projects_root = os.path.join(upload_folder, str(project.user_id), "projects")
+    live_dir = os.path.join(projects_root, str(project.id))
+    token = uuid.uuid4().hex
+    staging_dir = os.path.join(projects_root, f".staging-{project.id}-{token}")
+    trash_dir = os.path.join(projects_root, f".trash-{project.id}-{token}")
+
+    existing = {pf.path: pf for pf in project.files}
+    staged_map = dict(staged)
+    if mode == "replace":
+        final_paths = list(staged_map)
+    else:
+        final_paths = list(existing)
+        final_paths.extend(p for p in staged_map if p not in existing)
+    final_paths.sort()
+
+    # 1. Build the complete final tree in staging (new bytes + copies of the
+    #    files being kept). Any failure here leaves the live directory alone.
+    os.makedirs(staging_dir)
+    try:
+        for rel_path in final_paths:
+            dest = os.path.join(staging_dir, rel_path.replace("/", os.sep))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            if rel_path in staged_map:
+                with open(dest, "wb") as out:
+                    out.write(staged_map[rel_path])
+            else:
+                src = os.path.join(upload_folder, existing[rel_path].storage_path)
+                if not os.path.exists(src):
+                    raise FileNotFoundError(src)
+                shutil.copy2(src, dest)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
+    # 2. Swap the directories. The window between the two renames is a pair
+    #    of syscalls, not a copy, so a concurrent reader sees either the old
+    #    tree or the new one.
+    swapped = False
+    try:
+        if os.path.isdir(live_dir):
+            os.rename(live_dir, trash_dir)
+        os.rename(staging_dir, live_dir)
+        swapped = True
+
+        # 3. Commit the row changes. storage_path is derived from
+        #    (user_id, project_id, path), so it never needs rewriting.
+        now = datetime.now(timezone.utc)
+        for rel_path in final_paths:
+            pf = existing.get(rel_path)
+            data = staged_map.get(rel_path)
+            if pf is None:
+                db.session.add(
+                    ProjectFile(
+                        project_id=project.id,
+                        path=rel_path,
+                        storage_path=_get_project_storage_path(
+                            project.user_id, project.id, rel_path
+                        ),
+                        size=len(data),
+                    )
+                )
+            elif data is not None:
+                pf.size = len(data)
+                pf.uploaded_at = now
+        for pf in existing.values():
+            if mode == "replace" and pf.path not in staged_map:
+                db.session.delete(pf)
+        if name:
+            project.name = name
+        # Touching child rows does not bump the parent's onupdate timestamp.
+        project.updated_at = now
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        # 4a. Put the old directory back and drop the half-applied one.
+        if swapped:
+            shutil.rmtree(live_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        if os.path.isdir(trash_dir) and not os.path.isdir(live_dir):
+            os.rename(trash_dir, live_dir)
+        raise
+
+    # 4b. Commit succeeded: the old tree is now unreachable.
+    shutil.rmtree(trash_dir, ignore_errors=True)
+
+
+def _project_update_response(project, to_delete, mode):
+    return jsonify(
+        {
+            "id": project.id,
+            "name": project.name,
+            "file_count": len(project.files),
+            "total_size": sum(pf.size or 0 for pf in project.files),
+            "mode": mode,
+            "removed_count": len(to_delete),
+        }
+    )
+
+
+@projects_bp.route("/projects/<int:project_id>/upload", methods=["POST"])
+@login_required
+def update_project_files(project_id):
+    """Update an existing project from a batch of files, in place.
+
+    Form fields: files[], mode (merge|replace), optional paths[] (one
+    project-relative path per file), optional name.
+    """
+    project = _project_or_404(project_id)
+    mode = _parse_update_mode()
+    if mode is None:
+        return jsonify({"error": t("project_update_mode_invalid")}), 400
+
+    paths = request.form.getlist("paths") or None
+    staged, _, error = _stage_uploaded_files(
+        request.files.getlist("files"), paths=paths
+    )
+    if error:
+        return _project_upload_error(error)
+
+    staged, to_delete, error = _stage_project_update(project, staged, mode)
+    if error:
+        return jsonify({"error": error}), 400
+
+    name = (request.form.get("name") or "").strip() or None
+    try:
+        _apply_project_update(project, staged, mode, name=name)
+    except Exception:
+        return jsonify({"error": t("project_update_failed")}), 500
+
+    return _project_update_response(project, to_delete, mode)
+
+
+@projects_bp.route("/projects/<int:project_id>/upload-zip", methods=["POST"])
+@login_required
+def update_project_zip(project_id):
+    """Update an existing project from a ZIP archive, in place.
+
+    Form fields: file (the .zip), mode (merge|replace), optional name.
+    """
+    project = _project_or_404(project_id)
+    mode = _parse_update_mode()
+    if mode is None:
+        return jsonify({"error": t("project_update_mode_invalid")}), 400
+
+    staged, _, error = _stage_zip(request.files.get("file"))
+    if error:
+        return _project_upload_error(error)
+
+    staged, to_delete, error = _stage_project_update(project, staged, mode)
+    if error:
+        return jsonify({"error": error}), 400
+
+    name = (request.form.get("name") or "").strip() or None
+    try:
+        _apply_project_update(project, staged, mode, name=name)
+    except Exception:
+        return jsonify({"error": t("project_update_failed")}), 500
+
+    return _project_update_response(project, to_delete, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -556,10 +842,19 @@ def raw_file(token, rel_path):
     full_path = os.path.join(
         current_app.config["UPLOAD_FOLDER"], project_file.storage_path
     )
-    if not os.path.exists(full_path):
-        abort(404)
 
-    response = send_file(full_path)
+    # An in-place update swaps the project directory with two renames, so a
+    # path can be momentarily absent while both syscalls run. Retry briefly
+    # before reporting the file as gone; a genuinely deleted file still 404s.
+    response = None
+    for attempt in range(4):
+        try:
+            response = send_file(full_path)
+            break
+        except FileNotFoundError:
+            if attempt == 3:
+                abort(404)
+            time.sleep(0.005)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["X-Content-Type-Options"] = "nosniff"
     # The share viewer embeds this response in an iframe, so the app-wide
