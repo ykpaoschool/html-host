@@ -104,6 +104,7 @@ def create_app():
     from dashboard import dashboard_bp
     from editor import editor_bp
     from projects import projects_bp
+    from project_editor import project_editor_bp
     from share import share_bp
     from admin import admin_bp
     from api import api_bp, register_json_error_handlers
@@ -114,6 +115,10 @@ def create_app():
     # is already the case for share_bp's /s/<token>.
     app.register_blueprint(editor_bp)
     app.register_blueprint(projects_bp)
+    # The project file editor's routes extend /projects/<id>/files/*; it lives
+    # in its own module because it shares the save pipeline with editor.py
+    # rather than with projects.py.
+    app.register_blueprint(project_editor_bp)
     app.register_blueprint(share_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(api_bp, url_prefix="/api/v1")

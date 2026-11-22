@@ -958,6 +958,7 @@ def project_files_upsert(project_id):
         if pf:
             pf.size = len(data)
             pf.uploaded_at = now
+            pf.updated_at = now
         else:
             db.session.add(
                 ProjectFile(
@@ -965,6 +966,8 @@ def project_files_upsert(project_id):
                     path=rel_path,
                     storage_path=storage_path,
                     size=len(data),
+                    uploaded_at=now,
+                    updated_at=now,
                 )
             )
 
