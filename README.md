@@ -15,6 +15,9 @@ The project is designed to be simple to deploy and operate: a Flask app, SQLite 
 - Generate public share links with optional expiration and an optional custom URL slug
 - Preview shared HTML in a sandboxed iframe
 - Publish multi-file projects (HTML plus CSS, JS, images) served over real URLs
+- Update a published project in place — merge or replace with files or a ZIP — without changing its ID or share links
+- Browse a project's files, preview, download, replace or delete individual files
+- Edit a project's text files in the browser, keeping the last 10 versions of each file and a 100 MB history budget per project
 - JSON API at `/api/v1` for scripts and CI, with personal access tokens
 - MCP server so agents can publish and manage links — see [MCP Integration](#mcp-integration)
 - Microsoft Entra ID (Azure AD) SSO login via OAuth 2.0
