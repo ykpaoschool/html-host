@@ -215,6 +215,7 @@
   "editor_history_conflict": "The file was changed in another tab. Close the history panel and open it again.",
   "editor_history_load_failed": "Could not load the version history",
   "editor_history_retention": "The most recent {n} versions are kept",
+  "editor_history_retention_project": "The most recent {n} versions of each file are kept, up to {size} of history per project",
   "editor_preview": "Preview",
   "editor_preview_draft": "Previewing the draft",
   "editor_preview_hint": "The content in the editor right now, unsaved changes included",

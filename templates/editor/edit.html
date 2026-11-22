@@ -95,7 +95,7 @@
         {% endif %}
 
         {# Edit mode only: a file that does not exist yet has no revisions.
-           Project files have no history until C2, where urls.history appears. #}
+           Both scopes fill urls.history; the panel is the same in each. #}
         <button type="button" x-cloak x-show="mode === 'edit' && !fatal && !!urls.history" @click="toggleHistory()"
             class="px-3 py-2 rounded-xl border text-sm font-medium transition"
             :class="showHistory ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
@@ -347,8 +347,8 @@ function editorPage() {
         // Every endpoint this page fetches, injected by the server so nothing
         // here assembles a /files/<id>/... path (url_for is what percent-encodes
         // names with spaces, '#' or Chinese characters). Keys the current scope
-        // has no endpoint for are null: history/restore until C2 for projects,
-        // preview for single files (they preview a blob instead).
+        // has no endpoint for are null: preview for single files (they preview
+        // a blob instead) and create for projects.
         urls: {{ urls | tojson }},
         fileId: {{ (file.id if file else None) | tojson }},
         // Create mode: the folder the file lands in, and the base name in the
@@ -375,6 +375,9 @@ function editorPage() {
         showHistory: false,
         revisions: [],
         retention: 10,
+        // Project scope only: the project-wide ceiling for revision bytes.
+        // null for the single-file editor, whose history is bounded per file.
+        historyBudget: {{ history_budget | default(none) | tojson }},
         historyLoading: false,
         historyError: '',
         previewOpen: false,
@@ -413,6 +416,7 @@ function editorPage() {
             historyConflict: {{ 'editor_history_conflict' | t | tojson }},
             historyRestoreConfirm: {{ 'editor_history_restore_confirm' | t | tojson }},
             historyRetention: {{ 'editor_history_retention' | t | tojson }},
+            historyRetentionProject: {{ 'editor_history_retention_project' | t | tojson }},
         },
 
         // Saving is available in edit mode once the content - and with it the
@@ -732,8 +736,15 @@ function editorPage() {
         },
 
         // The {n} placeholder is filled in here rather than by i18n.t(), which
-        // only substitutes on the server.
+        // only substitutes on the server. Project scope gets the second
+        // sentence too: a per-project budget can trim a file below its own
+        // retention, so promising ten versions per file alone would be wrong.
         retentionNote() {
+            if (this.scope === 'project' && this.historyBudget) {
+                return this.strings.historyRetentionProject
+                    .replace('{n}', String(this.retention))
+                    .replace('{size}', this.formatSize(this.historyBudget));
+            }
             return this.strings.historyRetention.replace('{n}', String(this.retention));
         },
 
@@ -813,7 +824,14 @@ function editorPage() {
                     doc: text,
                     extensions: [
                         CM.basicSetup,
-                        CM.html(),
+                        // The open file's mode, not a fixed html: a project's
+                        // css/js revisions would otherwise be highlighted as
+                        // markup. Single files are always html, and their
+                        // content endpoint carries no language, so that case
+                        // keeps the previous behaviour explicitly.
+                        this.languageExtension(
+                            this.scope === 'project' ? this.language : 'html'
+                        ),
                         // The same facet as the editor: the stored bytes kept
                         // their own line separator, which is what lets a
                         // restored file come back byte-identical.
@@ -972,6 +990,9 @@ function editorPage() {
                 this.closePreview();
                 this.dirty = false;
                 await this.load();
+                // An open "save and preview" frame would otherwise keep
+                // showing the version the restore just replaced.
+                this.refreshSavedPreview();
                 await this.loadHistory();
                 this.status = 'saved';
             } catch (error) {
