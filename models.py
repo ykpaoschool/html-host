@@ -245,7 +245,46 @@ class ProjectFile(db.Model):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    # Newest first, the order the editor's history panel lists them in.
+    # "all, delete-orphan" keeps revision rows from outliving their file: every
+    # ProjectFile deletion path goes through the ORM (the project cascade, the
+    # detail-page delete, the API delete, and replace-mode updates). The blobs
+    # those rows point at are not covered by the cascade - see
+    # projects.delete_project_file_history.
+    revisions = db.relationship(
+        "ProjectFileRevision",
+        backref="project_file",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="ProjectFileRevision.created_at.desc()",
+    )
+
     __table_args__ = (UniqueConstraint("project_id", "path", name="uq_project_file_path"),)
+
+
+class ProjectFileRevision(db.Model):
+    """A previous version of one ProjectFile's bytes.
+
+    The row points at a blob under
+    UPLOAD_FOLDER/.history/<user_id>/projects/<project_id>/<project_file_id>/,
+    indexed by the ProjectFile id so an in-place update keeps history attached
+    to the path it rewrote. The "projects" segment deliberately cannot collide
+    with the single-file layout (FileRevision lives under .history/<user_id>/
+    <file_id>, and a file id is always an integer).
+
+    The blob is named after this row's primary key, so it is written after the
+    row has been flushed. Rows are removed by the cascade above, by the
+    per-file retention trim, or by the project-wide history budget - both in
+    editor_core.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_file_id = db.Column(
+        db.Integer, db.ForeignKey("project_file.id"), nullable=False
+    )
+    storage_path = db.Column(db.String(512), nullable=False)
+    size = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ProjectShareLink(db.Model):
