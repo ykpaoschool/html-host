@@ -462,6 +462,7 @@ def _apply_project_update(project, staged, mode, name=None):
         # 3. Commit the row changes. storage_path is derived from
         #    (user_id, project_id, path), so it never needs rewriting.
         now = datetime.now(timezone.utc)
+        removed_ids = []
         for rel_path in final_paths:
             pf = existing.get(rel_path)
             data = staged_map.get(rel_path)
@@ -484,6 +485,9 @@ def _apply_project_update(project, staged, mode, name=None):
                 pf.updated_at = now
         for pf in existing.values():
             if mode == "replace" and pf.path not in staged_map:
+                # Remember the id: after the commit the row is gone and its
+                # history directory has nothing left pointing at it.
+                removed_ids.append(pf.id)
                 db.session.delete(pf)
         if name:
             project.name = name
@@ -503,6 +507,13 @@ def _apply_project_update(project, staged, mode, name=None):
 
     # 4b. Commit succeeded: the old tree is now unreachable.
     shutil.rmtree(trash_dir, ignore_errors=True)
+
+    # 5. The files replace mode removed have no rows now, so their revision
+    #    blobs are unreachable too. Only here, after the commit: a failed
+    #    commit above restores the old directory and leaves those rows in
+    #    place, and their history has to survive with them.
+    for project_file_id in removed_ids:
+        delete_project_file_history(project.user_id, project.id, project_file_id)
 
 
 def _project_update_response(project, to_delete, mode):
@@ -612,6 +623,52 @@ def _project_disk_dir(user_id, project_id):
     )
 
 
+# Revision blobs live beside the user's own directory, not inside it, for the
+# same reason as the single-file history (dashboard.HISTORY_DIRNAME): a user can
+# create a folder named ".history", so nesting history under <user_id>/ would
+# let the two trees collide. The fixed "projects" segment is safe because the
+# single-file layout names its directories after integer file ids.
+def project_history_dir(user_id, project_id):
+    """Absolute directory holding every revision blob of one project."""
+    return os.path.join(
+        current_app.config["UPLOAD_FOLDER"],
+        ".history",
+        str(user_id),
+        "projects",
+        str(project_id),
+    )
+
+
+def project_file_history_dir(user_id, project_id, project_file_id):
+    """Absolute directory holding one ProjectFile's revision blobs.
+
+    The one place this path is assembled: the save pipeline writes here and
+    every delete path removes here, so a writer and a cleaner cannot end up
+    with two different ideas of where history lives.
+    """
+    return os.path.join(
+        project_history_dir(user_id, project_id), str(project_file_id)
+    )
+
+
+def delete_project_file_history(user_id, project_id, project_file_id):
+    """Drop one ProjectFile's revision blobs, rows or no rows.
+
+    ignore_errors: this runs on the delete paths, where a missing directory is
+    the ordinary case (a file edited once or never has none) and must not turn
+    a delete into a 500.
+    """
+    shutil.rmtree(
+        project_file_history_dir(user_id, project_id, project_file_id),
+        ignore_errors=True,
+    )
+
+
+def delete_project_history(user_id, project_id):
+    """Drop every revision blob belonging to one project."""
+    shutil.rmtree(project_history_dir(user_id, project_id), ignore_errors=True)
+
+
 @projects_bp.route("/projects")
 @login_required
 def index():
@@ -645,6 +702,9 @@ def delete_project(project_id):
     disk_dir = _project_disk_dir(current_user.id, project.id)
     if os.path.isdir(disk_dir):
         shutil.rmtree(disk_dir, ignore_errors=True)
+    # History lives beside the project directory, not inside it, so the rmtree
+    # above cannot reach it.
+    delete_project_history(current_user.id, project.id)
 
     # Cascade removes ProjectFile + ProjectShareLink rows.
     db.session.delete(project)
@@ -882,6 +942,11 @@ def project_file_delete(project_id, rel_path):
             return redirect(url_for("projects.detail", project_id=project.id))
 
     db.session.delete(project_file)
+    # The row is going away, so its revision blobs would be unreachable.
+    # Disk before the commit, like the blob above.
+    delete_project_file_history(
+        project.user_id, project.id, project_file.id
+    )
     # Touching a child row does not bump the parent's onupdate timestamp.
     project.updated_at = datetime.now(timezone.utc)
     db.session.commit()
