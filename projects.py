@@ -10,6 +10,7 @@ from flask import (
     Blueprint,
     abort,
     current_app,
+    flash,
     jsonify,
     redirect,
     render_template,
@@ -18,6 +19,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
 
 from i18n import t
@@ -644,6 +646,245 @@ def delete_project(project_id):
     return redirect(url_for("projects.index"))
 
 
+# ---------------------------------------------------------------------------
+# Project detail + single-file management.
+#
+# These are session-authenticated Web UI routes (the API plane has its own
+# equivalents). They touch individual ProjectFile rows and blobs only: the
+# Project row, its storage directory and every ProjectShareLink survive, so
+# /p/<token> keeps working across any of them.
+# ---------------------------------------------------------------------------
+
+
+def _set_raw_headers(response, no_store=False):
+    """Apply the headers every route that serves user content must carry.
+
+    Single source of truth for the share-token raw route and the owner
+    preview route, so the framing/CSP posture cannot drift between them
+    (or a future third). Assigns, not setdefault, because the app-wide
+    after_request hook has already applied X-Frame-Options: DENY and
+    frame-ancestors 'none'.
+    """
+    # Sibling assets are fetched from the sandboxed frame; ACAO keeps that
+    # working, nosniff stops a mislabelled file from being reinterpreted.
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # Only this app may frame user content.
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    # sandbox: the raw URL is reachable on its own, not only inside a viewer.
+    # Without it, uploaded HTML would run as a first-party document on this
+    # origin with the session cookie within reach. The frame's own sandbox
+    # attribute and this directive are intersected, so the allowances here
+    # must stay in sync with the templates that frame these URLs.
+    response.headers["Content-Security-Policy"] = (
+        "frame-ancestors 'self'; sandbox allow-scripts allow-popups"
+    )
+    if no_store:
+        # A replace writes new bytes at the same URL; never let the browser
+        # serve the previous version into the preview iframe.
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _project_file_or_404(project, rel_path):
+    """Return a ProjectFile by (project_id, normalized path), or 404.
+
+    The URL path is only a key into the DB — never joined onto the
+    filesystem — so path traversal is impossible.
+    """
+    norm = _normalize_rel_path(rel_path)
+    if norm is None:
+        abort(404)
+    project_file = ProjectFile.query.filter_by(
+        project_id=project.id, path=norm
+    ).first()
+    if project_file is None:
+        abort(404)
+    return project_file
+
+
+def _prune_empty_parents(directory, stop_dir):
+    """Remove empty directories from ``directory`` up to (excluding) ``stop_dir``.
+
+    Best-effort: stops at the first non-empty (or already gone) directory,
+    so deleting ``css/app.css`` drops an emptied ``css/`` but never the
+    project root.
+    """
+    directory = os.path.abspath(directory)
+    stop_dir = os.path.abspath(stop_dir)
+    while directory != stop_dir and directory.startswith(stop_dir + os.sep):
+        try:
+            os.rmdir(directory)
+        except OSError:
+            return
+        directory = os.path.dirname(directory)
+
+
+# The preview iframe is sandboxed, so its document has an opaque origin and
+# the browser treats its subresource requests as cross-site: a SameSite=Lax
+# session cookie is NOT sent, and sibling assets would redirect to /login
+# and fail. A short-lived signed token carried in the path is the credential
+# instead - relative URLs in the uploaded HTML inherit the path prefix, so
+# every css/js/image request keeps the token. It is read-only and scoped to
+# one project, and the owner's session is accepted as a fallback so opening
+# the URL directly keeps working after the token expires.
+_PREVIEW_TOKEN_SALT = "htmlhost-project-preview"
+_PREVIEW_TOKEN_MAX_AGE = 60 * 60  # 1 hour
+
+
+def _preview_serializer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt=_PREVIEW_TOKEN_SALT)
+
+
+def _mint_preview_token(project):
+    """Signed (project_id, user_id) capability for the preview iframe."""
+    return _preview_serializer().dumps({"p": project.id, "u": project.user_id})
+
+
+def _preview_token_valid(project, token):
+    try:
+        data = _preview_serializer().loads(token, max_age=_PREVIEW_TOKEN_MAX_AGE)
+    except BadSignature:
+        return False
+    return data.get("p") == project.id and data.get("u") == project.user_id
+
+
+@projects_bp.route("/projects/<int:project_id>")
+@login_required
+def detail(project_id):
+    """Owner-facing project page: file list, preview, replace, delete, upload."""
+    project = _project_or_404(project_id)
+    files = sorted(project.files, key=lambda pf: pf.path)
+    total_size = sum(pf.size or 0 for pf in files)
+    has_html = any(
+        pf.path.lower().endswith((".html", ".htm")) for pf in files
+    )
+    share_links = (
+        ProjectShareLink.query.filter_by(project_id=project.id)
+        .order_by(ProjectShareLink.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "projects/detail.html",
+        project=project,
+        files=files,
+        total_size=total_size,
+        has_html=has_html,
+        share_links=share_links,
+        preview_token=_mint_preview_token(project),
+    )
+
+
+def _project_file_response(project_file, *, as_attachment=False):
+    """Send a ProjectFile's blob, turning a missing file into a 404.
+
+    The blob can briefly be absent while an in-place update swaps the
+    project directory, so a stat-then-send would race; letting send_file
+    fail and mapping FileNotFoundError keeps that a 404, never a 500.
+    """
+    full_path = os.path.join(
+        current_app.config["UPLOAD_FOLDER"], project_file.storage_path
+    )
+    try:
+        return send_file(
+            full_path,
+            as_attachment=as_attachment,
+            download_name=(
+                os.path.basename(project_file.path) if as_attachment else None
+            ),
+        )
+    except FileNotFoundError:
+        abort(404)
+
+
+@projects_bp.route("/projects/<int:project_id>/raw/<path:rel_path>")
+@login_required
+def project_raw(project_id, rel_path):
+    """Owner preview of one project file, served from a real URL.
+
+    Carries the same headers as the share-token raw route (see
+    ``_set_raw_headers``), plus no-store so a replaced file is never shown
+    out of the browser cache.
+    """
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+    return _set_raw_headers(_project_file_response(project_file), no_store=True)
+
+
+@projects_bp.route("/projects/<int:project_id>/preview/<token>/<path:rel_path>")
+def project_preview(project_id, token, rel_path):
+    """Serve a project file to the owner's preview iframe.
+
+    Deliberately not ``@login_required``: the sandboxed frame's subresource
+    requests carry no session cookie (see the token note above), so the
+    signed path token is the credential. Either a valid token or the owner's
+    session is accepted; anything else is a 404 so project existence does
+    not leak.
+    """
+    project = db.session.get(Project, project_id)
+    if project is None:
+        abort(404)
+
+    session_ok = (
+        current_user.is_authenticated and current_user.id == project.user_id
+    )
+    if not (session_ok or _preview_token_valid(project, token)):
+        abort(404)
+
+    project_file = _project_file_or_404(project, rel_path)
+    return _set_raw_headers(_project_file_response(project_file), no_store=True)
+
+
+@projects_bp.route("/projects/<int:project_id>/files/<path:rel_path>/download")
+@login_required
+def project_file_download(project_id, rel_path):
+    """Download one project file as an attachment."""
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+    return _project_file_response(project_file, as_attachment=True)
+
+
+@projects_bp.route(
+    "/projects/<int:project_id>/files/<path:rel_path>/delete",
+    methods=["POST"],
+)
+@login_required
+def project_file_delete(project_id, rel_path):
+    """Delete one file from a project, in place.
+
+    Disk blob first, then the DB row (same ordering as deleting a whole
+    project), then best-effort empty-directory cleanup. The Project row and
+    its share links are never touched.
+    """
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+
+    full_path = os.path.join(
+        current_app.config["UPLOAD_FOLDER"], project_file.storage_path
+    )
+    # Missing blob is not an error: deleting is idempotent.
+    if os.path.isfile(full_path):
+        try:
+            os.remove(full_path)
+        except OSError:
+            # Never leave a row pointing at a file we could not remove.
+            flash(t("project_update_failed"), "error")
+            return redirect(url_for("projects.detail", project_id=project.id))
+
+    db.session.delete(project_file)
+    # Touching a child row does not bump the parent's onupdate timestamp.
+    project.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    _prune_empty_parents(
+        os.path.dirname(full_path),
+        _project_disk_dir(project.user_id, project.id),
+    )
+
+    flash(t("file_deleted"), "success")
+    return redirect(url_for("projects.detail", project_id=project.id))
+
+
 @projects_bp.route("/projects/<int:project_id>/share", methods=["POST"])
 @login_required
 def create_share(project_id):
@@ -855,19 +1096,4 @@ def raw_file(token, rel_path):
             if attempt == 3:
                 abort(404)
             time.sleep(0.005)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    # The share viewer embeds this response in an iframe, so the app-wide
-    # X-Frame-Options: DENY / frame-ancestors 'none' must be relaxed here -
-    # but only to same-origin, so other sites still cannot frame user
-    # content. Direct assignment: the app-level hook ran first with DENY.
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    # sandbox: these URLs are reachable on their own, not only through the
-    # viewer, and without it a project file would run as a first-party
-    # document on this origin, with the viewer's session cookie within reach.
-    # The frame's own sandbox attribute and this directive are intersected,
-    # so the allowances here must match templates/projects/view.html.
-    response.headers["Content-Security-Policy"] = (
-        "frame-ancestors 'self'; sandbox allow-scripts allow-popups"
-    )
-    return response
+    return _set_raw_headers(response)

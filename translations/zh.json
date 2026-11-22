@@ -217,5 +217,19 @@
   "editor_preview": "预览",
   "editor_preview_draft": "草稿预览",
   "editor_preview_hint": "显示编辑器里的当前内容，含未保存的改动",
-  "editor_preview_close": "关闭预览"
+  "editor_preview_close": "关闭预览",
+  "project_detail": "项目详情",
+  "project_detail_back": "返回项目列表",
+  "created_at": "创建时间",
+  "updated_at": "更新时间",
+  "total_size": "总大小",
+  "open_preview": "预览",
+  "replace_file": "替换",
+  "delete_file": "删除文件",
+  "confirm_delete_project_file": "确定删除这个文件吗？分享链接会保留，但如果删掉所有 HTML，分享页将不可访问。",
+  "file_deleted": "文件已删除",
+  "project_share_links": "分享链接",
+  "manage_share_links": "管理分享链接",
+  "open_in_new_tab": "新窗口打开",
+  "no_html_warning": "该项目当前没有 HTML 文件，分享页会返回 404。请上传一个 .html 文件。"
 }

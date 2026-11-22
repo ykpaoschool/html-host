@@ -1,0 +1,327 @@
+{% extends "app_layout.html" %}
+{% block title %}{{ project.name }} - HTMLHost{% endblock %}
+{% block main %}
+<div x-data="projectDetail()">
+    <!-- Header -->
+    <div class="flex items-start justify-between mb-6">
+        <div>
+            <a href="{{ url_for('projects.index') }}"
+                class="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-purple-600 transition mb-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                {{ 'project_detail_back' | t }}
+            </a>
+            <h1 class="text-2xl font-bold text-gray-800">{{ project.name }}</h1>
+            <p class="text-xs text-gray-400 mt-1">{{ 'project_detail' | t }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="{{ url_for('projects.index') }}"
+                class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                {{ 'manage_share_links' | t }}
+            </a>
+            <button @click="showUpload = !showUpload"
+                class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition hover:shadow-lg hover:shadow-purple-200">
+                + {{ 'upload_files' | t }}
+            </button>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div class="mb-4 p-3 rounded-xl text-sm {{ 'bg-red-50 text-red-600' if category == 'error' else 'bg-green-50 text-green-600' }}">
+        {{ message }}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-2xl border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">{{ 'files' | t }}</p>
+            <p class="text-lg font-semibold text-gray-800">{{ files|length }}</p>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">{{ 'total_size' | t }}</p>
+            <p class="text-lg font-semibold text-gray-800">{{ (total_size / 1024) | round(1) }} KB</p>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">{{ 'created_at' | t }}</p>
+            <p class="text-sm font-medium text-gray-700">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">{{ 'updated_at' | t }}</p>
+            <p class="text-sm font-medium text-gray-700">{{ project.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+        </div>
+    </div>
+
+    {% if not has_html %}
+    <div class="mb-4 p-3 rounded-xl text-sm bg-amber-50 text-amber-700">
+        {{ 'no_html_warning' | t }}
+    </div>
+    {% endif %}
+
+    <!-- Upload / update area -->
+    <div x-cloak x-show="showUpload" x-transition class="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <h3 class="text-sm font-semibold text-gray-800 mb-3">{{ 'update_project' | t }}</h3>
+        <p class="text-xs text-gray-400 mb-3">{{ 'update_project_hint' | t }}</p>
+        <div class="flex gap-2 mb-3">
+            <button type="button" @click="uploadMode = 'batch'"
+                class="px-3 py-2 rounded-xl text-sm font-medium transition border border-gray-200 text-gray-600 hover:bg-gray-50"
+                :class="uploadMode === 'batch' && 'gradient-btn text-white border-0 hover:shadow-none'">
+                {{ 'upload_files' | t }}
+            </button>
+            <button type="button" @click="uploadMode = 'zip'"
+                class="px-3 py-2 rounded-xl text-sm font-medium transition border border-gray-200 text-gray-600 hover:bg-gray-50"
+                :class="uploadMode === 'zip' && 'gradient-btn text-white border-0 hover:shadow-none'">
+                {{ 'upload_zip' | t }}
+            </button>
+        </div>
+        <input type="file" multiple x-show="uploadMode === 'batch'" x-ref="batchInput"
+            accept=".html,.htm,.css,.js,.mjs,.map,.json,.xml,.txt,.png,.jpg,.jpeg,.gif,.svg,.webp,.ico,.bmp,.woff,.woff2,.ttf,.eot,.otf,.csv,.md"
+            class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:text-white file:gradient-btn cursor-pointer">
+        <input type="file" accept=".zip" x-show="uploadMode === 'zip'" x-ref="zipInput"
+            class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:text-white file:gradient-btn cursor-pointer">
+        <div class="flex items-center justify-between mt-3">
+            <p class="text-xs text-gray-400">{{ 'share_links_unchanged' | t }}</p>
+            <button type="button" @click="submitUpdate()" :disabled="uploading"
+                class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition disabled:opacity-60"
+                x-text="uploading ? '{{ 'uploading' | t }}' : '{{ 'update_project' | t }}'"></button>
+        </div>
+    </div>
+
+    <p x-show="uploadError" x-transition class="mb-4 p-3 rounded-xl text-sm bg-red-50 text-red-600" x-text="uploadError"></p>
+
+    <!-- Files -->
+    {% if files %}
+    <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-8">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'name' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'size' | t }}</th>
+                    <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'uploaded_at' | t }}</th>
+                    <th class="text-right px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'actions' | t }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pf in files %}
+                {% set raw_url = url_for('projects.project_raw', project_id=project.id, rel_path=pf.path) %}
+                {% set preview_url = url_for('projects.project_preview', project_id=project.id, token=preview_token, rel_path=pf.path) %}
+                <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                    <td class="px-6 py-3 text-sm text-gray-700 font-mono break-all">{{ pf.path }}</td>
+                    <td class="px-6 py-3 text-sm text-gray-500 whitespace-nowrap">{{ (pf.size / 1024) | round(1) }} KB</td>
+                    <td class="px-6 py-3 text-sm text-gray-500 whitespace-nowrap">
+                        {{ pf.uploaded_at.strftime('%Y-%m-%d %H:%M') if pf.uploaded_at else '' }}
+                    </td>
+                    <td class="px-6 py-3 text-right">
+                        <div class="flex items-center justify-end gap-1">
+                            {% if pf.path.lower().endswith(('.html', '.htm')) %}
+                            <button type="button"
+                                data-raw="{{ preview_url }}" data-path="{{ pf.path }}"
+                                @click="openPreview($el.dataset.raw, $el.dataset.path)"
+                                class="px-2 py-1 rounded-lg text-xs text-purple-600 hover:bg-purple-50 transition"
+                                title="{{ 'open_preview' | t }}">{{ 'open_preview' | t }}</button>
+                            {% endif %}
+                            <a href="{{ raw_url }}" target="_blank" rel="noopener"
+                                class="px-2 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition"
+                                title="{{ 'open_in_new_tab' | t }}">{{ 'open_in_new_tab' | t }}</a>
+                            <a href="{{ url_for('projects.project_file_download', project_id=project.id, rel_path=pf.path) }}"
+                                class="px-2 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition">{{ 'download' | t }}</a>
+                            <label class="px-2 py-1 rounded-lg text-xs text-indigo-600 hover:bg-indigo-50 transition cursor-pointer">
+                                {{ 'replace_file' | t }}
+                                <input type="file" class="hidden" data-path="{{ pf.path }}"
+                                    @change="replaceFile($event, $event.target.dataset.path)">
+                            </label>
+                            <form method="POST"
+                                action="{{ url_for('projects.project_file_delete', project_id=project.id, rel_path=pf.path) }}"
+                                class="inline"
+                                onsubmit="return confirm('{{ 'confirm_delete_project_file' | t }}')">
+                                <button type="submit"
+                                    class="px-2 py-1 rounded-lg text-xs text-red-500 hover:bg-red-50 transition">{{ 'delete_file' | t }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-2xl border border-gray-100 px-6 py-16 text-center mb-8">
+        <p class="text-gray-400 text-lg mb-2">{{ 'no_files' | t }}</p>
+        <button @click="showUpload = true"
+            class="px-4 py-2 rounded-xl text-white text-sm font-semibold gradient-btn transition">
+            + {{ 'upload_files' | t }}
+        </button>
+    </div>
+    {% endif %}
+
+    <!-- Preview -->
+    <div x-cloak x-show="previewUrl" x-transition class="mb-8">
+        <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+                <span class="text-sm font-mono text-gray-600 truncate" x-text="previewPath"></span>
+                <div class="flex items-center gap-2 shrink-0">
+                    <a :href="previewUrl" target="_blank" rel="noopener"
+                        class="text-xs text-purple-600 hover:text-purple-800 transition">{{ 'open_in_new_tab' | t }}</a>
+                    <button type="button" @click="closePreview()"
+                        class="text-xs text-gray-400 hover:text-gray-600 transition">{{ 'cancel' | t }}</button>
+                </div>
+            </div>
+            <!-- Real file URL so sibling css/js/images resolve. The sandbox
+                 attribute must match the CSP sandbox directive on the raw
+                 route; they are intersected, so a mismatch silently drops a
+                 capability. -->
+            <iframe :src="previewUrl" sandbox="allow-scripts allow-popups"
+                class="w-full" style="height: 70vh; border: none;"></iframe>
+        </div>
+    </div>
+
+    <!-- Share links (read-only) -->
+    <div class="mt-2">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-800">{{ 'project_share_links' | t }}</h3>
+            <a href="{{ url_for('projects.index') }}"
+                class="text-sm text-purple-600 hover:text-purple-800 transition">{{ 'manage_share_links' | t }}</a>
+        </div>
+        {% if share_links %}
+        <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100">
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'share_link' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'expires_at' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'active' | t }}</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-400 uppercase">{{ 'access' | t }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for link in share_links %}
+                    <tr class="border-b border-gray-50">
+                        <td class="px-6 py-3">
+                            <a href="{{ url_for('projects.view', token=link.token) }}" target="_blank" rel="noopener"
+                                class="text-sm text-purple-600 hover:text-purple-800 transition truncate block max-w-xs">
+                                {{ url_for('projects.view', token=link.token, _external=True) }}
+                            </a>
+                        </td>
+                        <td class="px-6 py-3 text-sm text-gray-500">
+                            {{ link.expires_at.strftime('%Y-%m-%d %H:%M') if link.expires_at else ('never_expire' | t) }}
+                        </td>
+                        <td class="px-6 py-3">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                {{ 'bg-green-50 text-green-700' if link.is_active and not link.is_expired()
+                                else 'bg-red-50 text-red-700' }}">
+                                {{ ('active' | t) if link.is_active and not link.is_expired() else (('expired' | t) if link.is_expired() else ('inactive' | t)) }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-3">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                {{ 'bg-purple-50 text-purple-700' if link.require_login else 'bg-gray-50 text-gray-600' }}">
+                                {{ ('access_login_required' | t) if link.require_login else ('access_anonymous' | t) }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="bg-white rounded-2xl border border-gray-100 px-6 py-10 text-center">
+            <p class="text-gray-400">{{ 'no_share_links' | t }}</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+const PROJECT_ID = {{ project.id }};
+
+function projectDetail() {
+    return {
+        showUpload: false,
+        uploadMode: 'batch',
+        uploading: false,
+        uploadError: '',
+        previewUrl: '',
+        previewPath: '',
+
+        openPreview(rawUrl, path) {
+            this.previewPath = path;
+            this.previewUrl = rawUrl;
+        },
+
+        closePreview() {
+            this.previewUrl = '';
+            this.previewPath = '';
+        },
+
+        // Replacing one file reuses the in-place update route with an
+        // explicit target path; merge mode keeps every other file.
+        replaceFile(event, targetPath) {
+            const input = event.target;
+            const file = input.files && input.files[0];
+            if (!file) return;
+
+            this.uploadError = '';
+            const formData = new FormData();
+            formData.append('files', file);
+            formData.append('paths', targetPath);
+            formData.append('mode', 'merge');
+
+            this.uploading = true;
+            fetch('/projects/' + PROJECT_ID + '/upload', { method: 'POST', body: formData })
+                .then(async r => {
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(data.error || data.message || 'Error');
+                    return data;
+                })
+                .then(() => window.location.reload())
+                .catch(err => {
+                    this.uploading = false;
+                    input.value = '';
+                    this.uploadError = err.message;
+                });
+        },
+
+        submitUpdate() {
+            this.uploadError = '';
+            let endpoint;
+            const formData = new FormData();
+            formData.append('mode', 'merge');
+
+            if (this.uploadMode === 'batch') {
+                const files = this.$refs.batchInput.files;
+                if (!files || !files.length) {
+                    this.uploadError = "{{ 'project_no_files' | t }}";
+                    return;
+                }
+                for (const f of files) formData.append('files', f);
+                endpoint = '/projects/' + PROJECT_ID + '/upload';
+            } else {
+                const file = this.$refs.zipInput.files[0];
+                if (!file) {
+                    this.uploadError = "{{ 'project_no_files' | t }}";
+                    return;
+                }
+                formData.append('file', file);
+                endpoint = '/projects/' + PROJECT_ID + '/upload-zip';
+            }
+
+            this.uploading = true;
+            fetch(endpoint, { method: 'POST', body: formData })
+                .then(async r => {
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(data.error || data.message || 'Error');
+                    return data;
+                })
+                .then(() => window.location.reload())
+                .catch(err => {
+                    this.uploading = false;
+                    this.uploadError = err.message;
+                });
+        }
+    }
+}
+</script>
+{% endblock %}

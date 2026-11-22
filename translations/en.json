@@ -217,5 +217,19 @@
   "editor_preview": "Preview",
   "editor_preview_draft": "Previewing the draft",
   "editor_preview_hint": "The content in the editor right now, unsaved changes included",
-  "editor_preview_close": "Close preview"
+  "editor_preview_close": "Close preview",
+  "project_detail": "Project detail",
+  "project_detail_back": "Back to projects",
+  "created_at": "Created",
+  "updated_at": "Updated",
+  "total_size": "Total size",
+  "open_preview": "Preview",
+  "replace_file": "Replace",
+  "delete_file": "Delete file",
+  "confirm_delete_project_file": "Delete this file? Share links are kept, but if no HTML remains the share page will be unreachable.",
+  "file_deleted": "File deleted",
+  "project_share_links": "Share links",
+  "manage_share_links": "Manage share links",
+  "open_in_new_tab": "Open in new tab",
+  "no_html_warning": "This project has no HTML file right now, so the share page returns 404. Upload an .html file."
 }
