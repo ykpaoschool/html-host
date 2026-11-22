@@ -18,12 +18,15 @@ UNSUPPORTED_FILE_TYPE, INVALID_EXPIRY, INVALID_TOKEN, TOKEN_TAKEN,
 PAYLOAD_TOO_LARGE, CONTENT_TOO_LARGE,
 CONTENT_NOT_UTF8, TOO_MANY_FILES, PROJECT_TOO_LARGE.
 
-Two deliberate absences: there is **no endpoint that deletes content** (files
-or projects) — MCP may only publish and revoke links — and no cross-user
-access is ever reported as 403; another user's resource reads as 404 so a
-probe cannot tell "not yours" from "does not exist".
+Two deliberate absences: there is **no endpoint that deletes a document or a
+project** — only a single file inside a project can be removed
+(``DELETE /projects/<id>/files/<path>``) — and no cross-user access is ever
+reported as 403; another user's resource reads as 404 so a probe cannot tell
+"not yours" from "does not exist".
 """
 
+import base64
+import binascii
 import hmac
 import logging
 import os
@@ -81,6 +84,14 @@ logger = logging.getLogger(__name__)
 # argument (and therefore through the model's context), not about what the
 # store can hold: the Web UI still accepts up to MAX_FILE_SIZE per file.
 MAX_API_CONTENT_SIZE = 3 * 1024 * 1024  # 3 MiB
+
+# Per-file ceiling for a binary entry ('content_base64'). It matches what the
+# Web UI and the rest of the app enforce (MAX_FILE_SIZE), and is deliberately
+# *not* bounded by MAX_API_CONTENT_SIZE: that 3 MiB number exists because text
+# content has to travel through a model's context, which does not apply to
+# bytes a script posts. The project-wide 50 MB / 100-file limits still apply to
+# the resulting file set.
+MAX_API_BINARY_SIZE = MAX_FILE_SIZE
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -564,8 +575,8 @@ def _check_content_size(size):
     if size > MAX_API_CONTENT_SIZE:
         raise ApiError(
             "PAYLOAD_TOO_LARGE",
-            f"Content is {size} bytes, over the {MAX_API_CONTENT_SIZE} byte limit "
-            "(3 MiB is the maximum for a single API call). "
+            f"Text content is {size} bytes, over the {MAX_API_CONTENT_SIZE} byte "
+            "limit (3 MiB is the maximum text payload for a single API call). "
             "Publish larger files through the HTMLHost web UI.",
             413,
         )
@@ -605,36 +616,96 @@ def _entry_list(payload):
     if not isinstance(files, list) or not files:
         raise ApiError(
             "INVALID_REQUEST",
-            "'files' must be a non-empty list of {path, content} objects.",
+            "'files' must be a non-empty list of {path, content} or "
+            "{path, content_base64} objects.",
         )
     return files
 
 
-def _stage_project_files(entries, existing_sizes=None):
-    """Validate ``[{path, content}]`` and return ``(staged, final_sizes)``.
+def _entry_bytes(entry, index):
+    """Decode one file entry into ``(data, is_binary)``.
 
-    ``staged`` is ``[(rel_path, bytes)]`` ready for _persist_project or a disk
-    write. ``existing_sizes`` maps the project's current paths to their sizes so
-    that the project-wide limits are checked against the state the request
-    would leave behind, not just against the bytes being sent.
+    An entry carries either ``content`` (a UTF-8 string, the original shape) or
+    ``content_base64`` (raw bytes, base64-encoded). Exactly one is required:
+    accepting both would leave the caller's intent ambiguous.
+    """
+    content = entry.get("content")
+    encoded = entry.get("content_base64")
+    if content is not None and encoded is not None:
+        raise ApiError(
+            "INVALID_REQUEST",
+            f"files[{index}] must use either 'content' or 'content_base64', "
+            "not both.",
+        )
+    if content is not None:
+        if not isinstance(content, str):
+            raise ApiError(
+                "INVALID_REQUEST", f"files[{index}].content must be a string."
+            )
+        return content.encode("utf-8"), False
+    if encoded is None:
+        raise ApiError(
+            "INVALID_REQUEST",
+            f"files[{index}] requires 'content' or 'content_base64'.",
+        )
+    if not isinstance(encoded, str):
+        raise ApiError(
+            "INVALID_REQUEST", f"files[{index}].content_base64 must be a string."
+        )
+    if encoded.lstrip().lower().startswith("data:"):
+        raise ApiError(
+            "INVALID_REQUEST",
+            f"files[{index}].content_base64 is a data: URL; send only the "
+            "base64 payload that follows the comma.",
+        )
+    # Whitespace is stripped rather than rejected: long base64 is routinely
+    # wrapped, and a newline does not change what the bytes are.
+    compact = "".join(encoded.split())
+    if not compact:
+        return b"", True
+    # Restore padding the caller may have omitted, and accept the URL-safe
+    # alphabet: both decode to the same bytes, so neither is worth an error.
+    padded = compact + "=" * (-len(compact) % 4)
+    try:
+        return base64.b64decode(padded, altchars=b"-_", validate=True), True
+    except (binascii.Error, ValueError):
+        raise ApiError(
+            "INVALID_REQUEST",
+            f"files[{index}].content_base64 is not valid base64. Encode the "
+            "raw file bytes with standard base64 and send the result without "
+            "a 'data:' prefix.",
+        )
+
+
+def _stage_project_files(entries, existing_sizes=None):
+    """Validate ``[{path, content | content_base64}]`` into staged file bytes.
+
+    Returns ``(staged, final_sizes)``. ``staged`` is ``[(rel_path, bytes)]``
+    ready for _persist_project or a disk write. ``existing_sizes`` maps the
+    project's current paths to their sizes so that the project-wide limits are
+    checked against the state the request would leave behind, not just against
+    the bytes being sent.
+
+    Text entries count toward MAX_API_CONTENT_SIZE (per call); binary entries
+    do not, and are bounded per file by MAX_API_BINARY_SIZE instead.
     """
     final_sizes = dict(existing_sizes or {})
     staged = []
     seen = set()
-    request_bytes = 0
+    text_bytes = 0
 
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise ApiError(
                 "INVALID_REQUEST",
-                f"files[{index}] must be an object with 'path' and 'content'.",
+                f"files[{index}] must be an object with 'path' and 'content' "
+                "or 'content_base64'.",
             )
         path = entry.get("path")
-        content = entry.get("content")
-        if not isinstance(path, str) or not isinstance(content, str):
+        if not isinstance(path, str):
             raise ApiError(
                 "INVALID_REQUEST",
-                f"files[{index}] requires string 'path' and 'content'.",
+                f"files[{index}] requires a string 'path'.",
             )
 
         norm = _normalize_rel_path(path)
@@ -651,19 +722,21 @@ def _stage_project_files(entries, existing_sizes=None):
                 "UNSUPPORTED_FILE_TYPE", f"File type not allowed: {norm}."
             )
 
-        data = content.encode("utf-8")
-        if len(data) > MAX_FILE_SIZE:
+        data, is_binary = _entry_bytes(entry, index)
+        per_file_limit = MAX_API_BINARY_SIZE if is_binary else MAX_FILE_SIZE
+        if len(data) > per_file_limit:
             raise ApiError(
                 "PAYLOAD_TOO_LARGE",
                 f"{norm} is {len(data)} bytes; the per-file limit is "
-                f"{MAX_FILE_SIZE} bytes.",
+                f"{per_file_limit} bytes.",
                 413,
             )
-        request_bytes += len(data)
+        if not is_binary:
+            text_bytes += len(data)
         staged.append((norm, data))
         final_sizes[norm] = len(data)
 
-    _check_content_size(request_bytes)
+    _check_content_size(text_bytes)
 
     if len(final_sizes) > MAX_PROJECT_FILES:
         raise ApiError(
@@ -876,7 +949,11 @@ def file_update_content(file_id):
 
 @api_bp.route("/projects", methods=["POST"])
 def projects_create():
-    """Create a project. Body: {name, files:[{path, content}]}."""
+    """Create a project.
+
+    Body: ``{name, files:[{path, content} | {path, content_base64}]}``. Use
+    ``content_base64`` for images, fonts and anything else that is not text.
+    """
     payload = _json_body()
     name = payload.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -932,7 +1009,11 @@ def _write_file_atomically(full_path, data):
 
 @api_bp.route("/projects/<int:project_id>/files", methods=["PUT"])
 def project_files_upsert(project_id):
-    """Add or overwrite project files by path. Body: {files:[{path, content}]}.
+    """Add or overwrite project files by path.
+
+    Body: ``{files:[{path, content} | {path, content_base64}]}``. Text goes in
+    ``content``; images, fonts and other binaries go in ``content_base64`` as
+    raw (standard or URL-safe) base64 with no ``data:`` prefix.
 
     Overwriting a path keeps every existing share link working, which is the
     point of addressing files by path rather than deleting and recreating them.
