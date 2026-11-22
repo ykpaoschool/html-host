@@ -314,8 +314,9 @@ claude mcp add htmlhost \
   web UI, which accepts up to 10 MB per file; the error says so.
 - A document is **read back in windows** — 200 lines or 40 KB per call, whichever comes first — so a
   large file never lands in the model's context in one piece.
-- Agents can publish, update and unshare, but **cannot delete** content. Only share links can be
-  revoked, and the content behind them survives.
+- Agents can publish, update and unshare documents and whole projects, but **cannot delete** them.
+  Only an individual file inside a project can be removed (`delete_project_file`), and the project
+  and its share links survive that. Share links can be revoked; the content behind them survives.
 - Cross-user access always answers "not found", never "forbidden", so an agent cannot probe for
   content that exists.
 

@@ -1,4 +1,4 @@
-"""The twelve MCP tools, each a thin translation of one /api/v1 call.
+"""The thirteen MCP tools, each a thin translation of one /api/v1 call.
 
 The tools validate nothing the API already validates and decide nothing the API
 already decides: ownership, quotas and expiry all belong to HTMLHost, which is
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Literal, Optional
+from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -64,7 +65,8 @@ for, and you can only see that account's content.
 
 Usual flow: publish_html (or publish_project) to get a URL, get_file_content to
 read a document back, update_content to revise it while the URL stays the same,
-revoke_share to stop sharing it.
+delete_project_file to drop an asset a project no longer uses, revoke_share to
+stop sharing it.
 
 - Expiry: pass expires_in rather than computing a date yourself. It accepts
   "30m", "24h", "7d" or "never". Use expires_at only when an exact timestamp is
@@ -77,8 +79,9 @@ revoke_share to stop sharing it.
   more remain.
 - Content is limited to 3 MiB per call. Larger documents have to be published
   through the HTMLHost web UI, and the error says so when that limit is hit.
-- Content can be published, updated and unshared, but never deleted - there is
-  no delete tool, by design.
+- Content can be published, updated and unshared. Documents and whole projects
+  are never deleted; only a single file inside a project can be, with
+  delete_project_file - the project and its share links survive that.
 """
 
 
@@ -310,7 +313,7 @@ def _created_output(label, link):
 
 
 def register_tools(server, config):
-    """Attach the twelve tools to ``server``, wired to ``config``."""
+    """Attach the thirteen tools to ``server``, wired to ``config``."""
     client = HtmlHostClient(config)
 
     # -- identity ----------------------------------------------------------
@@ -529,6 +532,33 @@ def register_tools(server, config):
                 for entry in updated["files"]
             ]
         return "\n".join(body)
+
+    @_tool(server)
+    async def delete_project_file(ctx: Context, project_id: int, path: str) -> str:
+        """Delete one file from a project, leaving the project and its share
+        links intact.
+
+        Use this to remove an asset the project no longer references - an old
+        image, a stylesheet, a superseded page. This is irreversible: there is
+        no undo and no history for a file removed this way. Read the project
+        first with get_content if you are not certain the path is the one you
+        mean.
+
+        ``path`` is the project-relative path exactly as listed by get_content,
+        e.g. ``assets/old-logo.png``. An unknown path is an error, not a no-op.
+        Documents and whole projects cannot be deleted through these tools.
+        """
+        api = _Api(client, config, ctx)
+        # Percent-encode path segments: a Chinese name, a space or a '#' must
+        # survive as one path, not truncate the URL or be read as a fragment.
+        result = await api(
+            "DELETE", f"/projects/{project_id}/files/{quote(path, safe='/')}"
+        )
+        return (
+            f"Deleted `{result['path']}` from project {result['project_id']}.\n"
+            "\nThe project and every share link for it are unchanged. Any page "
+            "that still references the deleted file will fail to load it."
+        )
 
     # -- reading -----------------------------------------------------------
 
