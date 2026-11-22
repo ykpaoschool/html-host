@@ -105,6 +105,40 @@ def _folder_url(folder_id):
     return url_for("dashboard.index")
 
 
+def _editor_urls(file_id):
+    """The endpoint URLs the editor template fetches, or None where the scope
+    has no such endpoint.
+
+    Everything the template calls comes from here rather than being assembled
+    in JavaScript: ``url_for`` is what percent-encodes a file name with spaces,
+    '#' or Chinese characters, and the project editor injects the same shape of
+    object with different routes. ``history`` and ``restore`` are the
+    collection URLs; the revision id is appended by the page. In create mode
+    the file does not exist yet, so only ``create`` is usable.
+    """
+    create_url = url_for("editor.create_new_file")
+    if file_id is None:
+        return {
+            "content": None,
+            "history": None,
+            "restore": None,
+            "download": None,
+            "editBase": None,
+            "preview": None,
+            "create": create_url,
+        }
+    history_url = url_for("editor.list_history", file_id=file_id)
+    return {
+        "content": url_for("editor.get_content", file_id=file_id),
+        "history": history_url,
+        "restore": history_url,
+        "download": url_for("editor.download", file_id=file_id),
+        "editBase": url_for("editor.edit_file", file_id=file_id),
+        "preview": None,
+        "create": create_url,
+    }
+
+
 def _revision_or_404(file, revision_id):
     """One of *this* file's revisions, or 404.
 
@@ -159,11 +193,14 @@ def new_file():
 
     return render_template(
         "editor/edit.html",
+        scope="file",
         mode="create",
         file=None,
         folder_id=folder_id,
         base_name=base_name,
+        current_path="",
         back_url=_folder_url(folder_id),
+        urls=_editor_urls(None),
     )
 
 
@@ -249,6 +286,13 @@ def create_new_file():
                 "revision": content_revision(data),
                 "size": len(data),
                 "edit_url": url_for("editor.edit_file", file_id=file.id),
+                "download_url": url_for("editor.download", file_id=file.id),
+                # The create page was rendered before the file existed, so its
+                # urls object has no content/history routes yet. Hand them over
+                # here rather than letting the page assemble /files/<id>/...
+                # paths on the client.
+                "content_url": url_for("editor.get_content", file_id=file.id),
+                "history_url": url_for("editor.list_history", file_id=file.id),
             }
         ),
         201,
@@ -266,13 +310,16 @@ def edit_file(file_id):
     file = _file_or_404(file_id)
     return render_template(
         "editor/edit.html",
+        scope="file",
         mode="edit",
         file=file,
         folder_id=file.folder_id,
         # Unused here, but the name field is in the markup either way (a
         # successful first save turns the create page into this one).
         base_name="",
+        current_path="",
         back_url=_folder_url(file.folder_id),
+        urls=_editor_urls(file.id),
     )
 
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ (file.name if file else ('editor_new_file' | t)) }} - HTMLHost{% endblock %}
+{% block title %}{{ (project.name ~ ' / ' ~ current_path) if scope == 'project' else (file.name if file else ('editor_new_file' | t)) }} - HTMLHost{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -31,6 +31,12 @@
         </a>
 
         <div class="flex items-center gap-2 min-w-0">
+            {# Project scope: which project this file belongs to, so the page is
+               identifiable when several are open. #}
+            {% if scope == 'project' %}
+            <span class="text-xs text-gray-400 truncate max-w-[16rem]">{{ project.name }}</span>
+            <span class="text-gray-300">/</span>
+            {% endif %}
             {# Create mode shows the name field where the title normally sits.
                The ".html" beside it is a label, not part of the value, so the
                suffix cannot be edited away. Both the field and the title stay
@@ -38,8 +44,8 @@
                save turns this page into the edit page of the file it just
                created, and the swap has to happen without a round trip. #}
             <span x-cloak x-show="mode === 'edit'"
-                  class="text-sm font-medium text-gray-800 truncate"
-                  x-text="fileName">{{ file.name if file else '' }}</span>
+                  class="text-sm font-medium text-gray-800 font-mono truncate"
+                  x-text="fileName">{{ file.name if file else current_path }}</span>
             <div x-cloak x-show="mode === 'create'" class="flex items-center">
                 <input type="text" x-model="baseName" value="{{ base_name }}"
                     spellcheck="false" autocapitalize="off" autocorrect="off"
@@ -65,6 +71,18 @@
             {{ 'save' | t }}
         </button>
 
+        {% if scope == 'project' %}
+        {# Project files are previewed from their real URL, not from a blob: the
+           page's css/js/images are relative references that a blob: document
+           cannot resolve. "Save and preview" therefore saves first and then
+           loads the signed preview route - the banner over the frame says so,
+           because nothing here previews unsaved bytes. #}
+        <button type="button" x-cloak x-show="!readonlyReason && !fatal" @click="saveAndPreview()"
+            :disabled="saving || !canSave"
+            class="px-3 py-2 rounded-xl border text-sm font-medium transition border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ 'editor_save_and_preview' | t }}
+        </button>
+        {% else %}
         {# Unlike "history" this is not edit-mode only: the draft is what gets
            previewed, and a file that has not been created yet needs that most.
            It is hidden for a read-only or missing file the same way history
@@ -74,9 +92,11 @@
             :class="draftOpen ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
             {{ 'editor_preview' | t }}
         </button>
+        {% endif %}
 
-        {# Edit mode only: a file that does not exist yet has no revisions. #}
-        <button type="button" x-cloak x-show="mode === 'edit' && !fatal" @click="toggleHistory()"
+        {# Edit mode only: a file that does not exist yet has no revisions.
+           Project files have no history until C2, where urls.history appears. #}
+        <button type="button" x-cloak x-show="mode === 'edit' && !fatal && !!urls.history" @click="toggleHistory()"
             class="px-3 py-2 rounded-xl border text-sm font-medium transition"
             :class="showHistory ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
             {{ 'editor_history' | t }}
@@ -118,6 +138,35 @@
     <!-- Editor. Kept mounted (never display:none) so CodeMirror always has a
          sized element to measure when it attaches. -->
     <div class="flex-1 min-h-0 flex" x-show="!fatal">
+        {% if scope == 'project' %}
+        {# The project's files, grouped by directory. Plain links, not a
+           client-side switcher: navigating away is what triggers the existing
+           beforeunload dirty guard, and every URL is built by url_for so a
+           name with spaces, '#' or Chinese characters is encoded correctly.
+           Files outside the editable whitelist are still listed (read-only
+           with a download link) but styled muted. #}
+        <aside class="w-64 flex-shrink-0 flex flex-col bg-gray-50 border-r border-gray-200">
+            <div class="flex-shrink-0 flex items-center px-4 h-11 border-b border-gray-200">
+                <span class="text-sm font-medium text-gray-700">{{ 'editor_project_files' | t }}</span>
+            </div>
+            <nav class="flex-1 overflow-y-auto py-2">
+                {% for directory, entries in file_groups %}
+                {% if directory %}
+                <p class="px-4 pt-3 pb-1 text-xs font-medium text-gray-400 truncate" title="{{ directory }}">{{ directory }}/</p>
+                {% endif %}
+                {% for pf in entries %}
+                <a href="{{ url_for('project_editor.edit', project_id=project.id, rel_path=pf.path) }}"
+                   title="{{ pf.path }}"
+                   class="block px-4 py-1.5 text-xs font-mono truncate transition
+                          {{ 'bg-purple-50 text-purple-700 font-semibold' if pf.path == current_path
+                             else ('text-gray-700 hover:bg-white' if pf.path in editable_paths else 'text-gray-400 hover:bg-white') }}">
+                    {{ pf.path.rsplit('/', 1)[-1] }}
+                </a>
+                {% endfor %}
+                {% endfor %}
+            </nav>
+        </aside>
+        {% endif %}
         <div class="flex-1 min-w-0 relative">
             <div x-cloak x-show="loading"
                  class="absolute inset-0 z-10 flex items-center justify-center bg-white text-sm text-gray-400">
@@ -192,6 +241,36 @@
                             class="flex-1 w-full border-0 bg-white"></iframe>
                 </div>
             </template>
+
+            {% if scope == 'project' %}
+            <!-- Saved-version preview (project scope only). The URL is the
+                 signed project_preview route, so the sandboxed frame's own
+                 css/js/image requests carry the token in the path and are not
+                 redirected to /login - see projects.py's token note. sandbox
+                 stays in sync with the CSP sandbox directive on that route:
+                 they are intersected, so an allowance present in one place
+                 only silently does nothing. -->
+            <template x-if="savedPreviewOpen">
+                <div class="absolute inset-0 z-20 flex flex-col bg-white">
+                    <div class="flex-shrink-0 flex items-center gap-3 px-4 py-2 bg-purple-50 border-b border-purple-200 text-sm text-purple-800">
+                        <span class="font-medium">{{ 'editor_preview_saved' | t }}</span>
+                        <span class="text-xs text-purple-500">{{ 'editor_preview_saved_hint' | t }}</span>
+                        <div class="flex-1"></div>
+                        <a :href="savedPreviewUrl" target="_blank" rel="noopener"
+                           class="px-3 py-1.5 rounded-lg border border-purple-300 text-xs font-medium hover:bg-purple-100 transition">
+                            {{ 'open_in_new_tab' | t }}
+                        </a>
+                        <button type="button" @click="closeSavedPreview()"
+                            class="px-3 py-1.5 rounded-lg border border-purple-300 text-xs font-medium hover:bg-purple-100 transition">
+                            {{ 'editor_preview_close' | t }}
+                        </button>
+                    </div>
+                    <iframe :src="savedPreviewUrl" sandbox="allow-scripts allow-popups"
+                            title="{{ 'editor_preview_saved' | t }}"
+                            class="flex-1 w-full border-0 bg-white"></iframe>
+                </div>
+            </template>
+            {% endif %}
         </div>
 
         <!-- Version history. A column rather than an overlay: the editor stays
@@ -261,12 +340,25 @@
 function editorPage() {
     return {
         mode: {{ mode | tojson }},
+        // 'file' is the single-file editor; 'project' edits one ProjectFile
+        // inside a project. Only the labels and previews differ - the save
+        // contract is the same.
+        scope: {{ scope | tojson }},
+        // Every endpoint this page fetches, injected by the server so nothing
+        // here assembles a /files/<id>/... path (url_for is what percent-encodes
+        // names with spaces, '#' or Chinese characters). Keys the current scope
+        // has no endpoint for are null: history/restore until C2 for projects,
+        // preview for single files (they preview a blob instead).
+        urls: {{ urls | tojson }},
         fileId: {{ (file.id if file else None) | tojson }},
         // Create mode: the folder the file lands in, and the base name in the
         // field (the fixed ".html" is not part of either).
         folderId: {{ folder_id | tojson }},
         baseName: {{ base_name | tojson }},
-        fileName: {{ (file.name if file else '') | tojson }},
+        fileName: {{ (file.name if file else current_path) | tojson }},
+        // CodeMirror language mode of the open document ('html' | 'css' |
+        // 'javascript' | 'text'); replaced by the content endpoint's answer.
+        language: 'html',
         loading: true,
         readonlyReason: null,
         fatal: false,
@@ -297,9 +389,15 @@ function editorPage() {
         // clobber the other.
         draftOpen: false,
         draftUrl: null,
+        // Saved-version preview (project scope): the iframe loads the signed
+        // preview route, so this is a server URL rather than a blob. The
+        // banner states that unsaved changes are not in it.
+        savedPreviewOpen: false,
+        savedPreviewUrl: null,
         strings: {
             tooLarge: {{ 'editor_readonly_too_large' | t | tojson }},
             notUtf8: {{ 'editor_readonly_not_utf8' | t | tojson }},
+            notEditable: {{ 'editor_readonly_not_editable' | t | tojson }},
             loadFailed: {{ 'editor_load_failed' | t | tojson }},
             fileMoved: {{ 'editor_file_moved' | t | tojson }},
             fileMovedHint: {{ 'editor_file_moved_hint' | t | tojson }},
@@ -327,9 +425,9 @@ function editorPage() {
         },
 
         get readonlyMessage() {
-            return this.readonlyReason === 'too_large'
-                ? this.strings.tooLarge
-                : this.strings.notUtf8;
+            if (this.readonlyReason === 'too_large') return this.strings.tooLarge;
+            if (this.readonlyReason === 'not_editable') return this.strings.notEditable;
+            return this.strings.notUtf8;
         },
 
         get fatalTitle() {
@@ -384,7 +482,7 @@ function editorPage() {
                 this.load();
             } else {
                 this.loading = false;
-                this.setDocument('', 'lf', false);
+                this.setDocument('', 'lf', false, 'html');
             }
         },
 
@@ -393,7 +491,7 @@ function editorPage() {
             this.status = '';
             this.errorMessage = '';
             try {
-                const response = await fetch('/files/' + this.fileId + '/content');
+                const response = await fetch(this.urls.content);
                 if (this.sessionExpired(response)) {
                     this.fatal = 'session_expired';
                     this.loading = false;
@@ -413,16 +511,29 @@ function editorPage() {
                 this.downloadUrl = data.download_url;
                 this.baseRevision = data.revision;
                 this.readonlyReason = data.readonly_reason;
+                this.language = data.language || 'text';
                 this.loading = false;
                 this.setDocument(data.content === null ? '' : data.content,
-                                 data.line_separator, !!data.readonly_reason);
+                                 data.line_separator, !!data.readonly_reason,
+                                 this.language);
             } catch (error) {
                 this.fatal = 'load_failed';
                 this.loading = false;
             }
         },
 
-        setDocument(doc, separator, readonly) {
+        // The CodeMirror language mode for a file, by extension. 'text' (json,
+        // md, txt, csv, map) gets no language package - the bundle only ships
+        // html/css/javascript - and is highlighted as plain text.
+        languageExtension(language) {
+            const CM = window.HtmlHostEditor;
+            if (language === 'html') return CM.html();
+            if (language === 'css') return CM.css();
+            if (language === 'javascript') return CM.javascript();
+            return [];
+        },
+
+        setDocument(doc, separator, readonly, language) {
             const CM = window.HtmlHostEditor;
             // The facet takes the literal separator to split and re-join on.
             // For that reason the document is handed over exactly as the
@@ -434,7 +545,7 @@ function editorPage() {
                 doc: doc,
                 extensions: [
                     CM.basicSetup,
-                    CM.html(),
+                    this.languageExtension(language || 'html'),
                     CM.EditorState.lineSeparator.of(lineSeparator),
                     CM.EditorView.editable.of(!readonly),
                     CM.EditorView.updateListener.of((update) => {
@@ -479,7 +590,7 @@ function editorPage() {
             this.status = '';
             this.errorMessage = '';
             try {
-                const response = await fetch('/files/new', {
+                const response = await fetch(this.urls.create, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -521,7 +632,18 @@ function editorPage() {
                 this.fileId = data.id;
                 this.fileName = data.name;
                 this.baseRevision = data.revision;
-                this.downloadUrl = '/files/' + data.id + '/download';
+                this.downloadUrl = data.download_url;
+                // The page was rendered for "new", so its urls object had no
+                // per-file routes. The server hands them over with the created
+                // id; from here the next save and the history panel use the
+                // same object an existing file's page is rendered with.
+                this.urls = Object.assign({}, this.urls, {
+                    content: data.content_url,
+                    history: data.history_url,
+                    restore: data.history_url,
+                    download: data.download_url,
+                    editBase: data.edit_url,
+                });
                 this.dirty = false;
                 this.status = 'saved';
                 // Without this the address bar still reads /files/new, so a
@@ -539,7 +661,7 @@ function editorPage() {
             this.status = '';
             this.errorMessage = '';
             try {
-                const response = await fetch('/files/' + this.fileId + '/content', {
+                const response = await fetch(this.urls.content, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: content, base_revision: baseRevision }),
@@ -565,6 +687,10 @@ function editorPage() {
                 this.baseRevision = data.revision;
                 this.dirty = false;
                 this.status = 'saved';
+                // An open saved-version preview is now one revision behind;
+                // point it at what was just written instead of leaving the
+                // user looking at the previous version.
+                this.refreshSavedPreview();
                 // Keep an open panel honest: this save just added a version to
                 // the list it is showing.
                 if (this.showHistory) this.loadHistory();
@@ -624,7 +750,7 @@ function editorPage() {
             this.historyLoading = true;
             this.historyError = '';
             try {
-                const response = await fetch('/files/' + this.fileId + '/history');
+                const response = await fetch(this.urls.history);
                 if (this.sessionExpired(response)) {
                     this.historyError = this.strings.sessionExpired;
                     return;
@@ -649,7 +775,7 @@ function editorPage() {
             // overlay: only one of the two z-20 previews may be up at a time.
             this.closeDraftPreview();
             try {
-                const response = await fetch('/files/' + this.fileId + '/history/' + revision.id);
+                const response = await fetch(this.urls.history + '/' + revision.id);
                 if (this.sessionExpired(response)) {
                     this.historyError = this.strings.sessionExpired;
                     return;
@@ -769,6 +895,39 @@ function editorPage() {
             }
         },
 
+        // --- Saved-version preview (project scope) ---------------------------
+
+        // "Save and preview". A project page cannot preview a blob: its css/js
+        // and links are relative references that a blob: document cannot
+        // resolve. So the preview is always the server's copy, and the frame
+        // banner says so - saving first is what keeps that honest. A failed or
+        // conflicting save leaves the editor dirty and opens nothing.
+        async saveAndPreview() {
+            if (this.saving || this.readonlyReason || !this.canSave) return;
+            if (this.dirty) {
+                await this.save();
+                if (this.dirty || this.showConflict) return;
+            }
+            this.refreshSavedPreview();
+            if (this.savedPreviewUrl) this.savedPreviewOpen = true;
+        },
+
+        // ?v=<revision> is belt and braces next to the preview route's
+        // no-store: it makes the URL change on every save, so a copy cached
+        // anywhere cannot be mistaken for the version just written.
+        refreshSavedPreview() {
+            if (this.scope !== 'project' || !this.urls.preview || !this.baseRevision) {
+                this.savedPreviewUrl = null;
+                return;
+            }
+            this.savedPreviewUrl =
+                this.urls.preview + '?v=' + encodeURIComponent(this.baseRevision);
+        },
+
+        closeSavedPreview() {
+            this.savedPreviewOpen = false;
+        },
+
         async restore() {
             if (!this.previewRevision || this.restoring) return;
             // There is no merging a draft with an older version, so the draft
@@ -781,7 +940,7 @@ function editorPage() {
             this.historyError = '';
             try {
                 const response = await fetch(
-                    '/files/' + this.fileId + '/history/' + this.previewRevision.id + '/restore',
+                    this.urls.restore + '/' + this.previewRevision.id + '/restore',
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

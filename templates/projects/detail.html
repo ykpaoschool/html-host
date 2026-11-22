@@ -116,6 +116,13 @@
                     </td>
                     <td class="px-6 py-3 text-right">
                         <div class="flex items-center justify-end gap-1">
+                            {# Text files only - the rest (images, fonts) have no
+                               editor, and the list comes from the same
+                               whitelist project_editor.py enforces. #}
+                            {% if pf.path in editable_paths %}
+                            <a href="{{ url_for('project_editor.edit', project_id=project.id, rel_path=pf.path) }}"
+                                class="px-2 py-1 rounded-lg text-xs text-purple-600 hover:bg-purple-50 transition">{{ 'edit' | t }}</a>
+                            {% endif %}
                             {% if pf.path.lower().endswith(('.html', '.htm')) %}
                             <button type="button"
                                 data-raw="{{ preview_url }}" data-path="{{ pf.path }}"
