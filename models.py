@@ -233,6 +233,17 @@ class ProjectFile(db.Model):
     storage_path = db.Column(db.String(512), nullable=False)
     size = db.Column(db.Integer, default=0)
     uploaded_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # When the bytes last changed. Separate from uploaded_at, which stays the
+    # moment the row first appeared (the detail page's "uploaded" column), and
+    # bumped explicitly by every in-place write: the column's onupdate only
+    # fires when a value actually changes, and a replace that leaves the byte
+    # count alone would otherwise look untouched. Rows that predate the column
+    # are NULL; readers fall back to uploaded_at.
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     __table_args__ = (UniqueConstraint("project_id", "path", name="uq_project_file_path"),)
 

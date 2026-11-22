@@ -22,6 +22,7 @@ from flask_login import current_user, login_required
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
 
+from editor_core import is_editable_path
 from i18n import t
 from models import Project, ProjectFile, ProjectShareLink, db, mint_share_token
 
@@ -117,6 +118,7 @@ def _persist_project(user_id, name, staged):
     db.session.add(project)
     db.session.flush()  # populate project.id before writing files
 
+    now = datetime.now(timezone.utc)
     try:
         for rel_path, content in staged:
             storage_path = _get_project_storage_path(user_id, project.id, rel_path)
@@ -129,6 +131,8 @@ def _persist_project(user_id, name, staged):
                     path=rel_path,
                     storage_path=storage_path,
                     size=len(content),
+                    uploaded_at=now,
+                    updated_at=now,
                 )
             )
         db.session.commit()
@@ -470,11 +474,14 @@ def _apply_project_update(project, staged, mode, name=None):
                             project.user_id, project.id, rel_path
                         ),
                         size=len(data),
+                        uploaded_at=now,
+                        updated_at=now,
                     )
                 )
             elif data is not None:
                 pf.size = len(data)
                 pf.uploaded_at = now
+                pf.updated_at = now
         for pf in existing.values():
             if mode == "replace" and pf.path not in staged_map:
                 db.session.delete(pf)
@@ -771,6 +778,9 @@ def detail(project_id):
         total_size=total_size,
         has_html=has_html,
         share_links=share_links,
+        # Only these get an "edit" link; everything else can be previewed,
+        # downloaded, replaced or deleted, but not opened in the text editor.
+        editable_paths={pf.path for pf in files if is_editable_path(pf.path)},
         preview_token=_mint_preview_token(project),
     )
 

@@ -21,13 +21,13 @@ Two properties are load-bearing and easy to break:
 
 A third applies to saving: the bytes being replaced are kept as a revision
 before the new ones land, and a revision's blob is named after its row's
-primary key. The write order in ``_apply_content`` is therefore part of the
-contract, not a detail to rearrange.
+primary key. That ordering lives in ``editor_core.apply_content`` now - shared
+with the project editor, which is why it is not a detail to rearrange. This
+module keeps only what is specific to a ``File`` row: which table a revision
+belongs to and where its blobs live.
 """
 
 import os
-import tempfile
-from datetime import datetime, timezone
 
 from flask import (
     Blueprint,
@@ -41,30 +41,24 @@ from flask import (
 from flask_login import current_user, login_required
 
 from dashboard import (
-    _ensure_upload_dir,
     _is_valid_component_name,
     create_file,
     history_dir,
 )
-from models import File, FileRevision, Folder, content_revision, db
+from editor_core import (
+    MAX_EDITABLE_FILE_SIZE,
+    RETENTION,
+    READONLY_NOT_UTF8,
+    READONLY_TOO_LARGE,
+    apply_content,
+    detect_line_separator,
+    iso_utc,
+    ordered_revisions,
+    read_revision_blob,
+)
+from models import File, FileRevision, Folder, content_revision
 
 editor_bp = Blueprint("editor", __name__)
-
-# The single "one file" limit for online editing, defined once so the read-only
-# check and the save check cannot drift apart. It constrains the editor only:
-# uploads keep their own limits (50 MB global / 10 MB per file inside projects),
-# so a larger file still uploads and still gets share links - it just cannot be
-# edited in the browser.
-MAX_EDITABLE_FILE_SIZE = 2 * 1024 * 1024
-
-# How many revisions of one file are kept. Bounded on purpose: at the size the
-# editor accepts, the history of one file costs at most this many times
-# MAX_EDITABLE_FILE_SIZE on disk. If that threshold is ever raised, this is the
-# number that has to be looked at again (requirements F9).
-RETENTION = 10
-
-READONLY_TOO_LARGE = "too_large"
-READONLY_NOT_UTF8 = "not_utf8"
 
 # The editor's filename field holds the base name; ".html" sits next to it as a
 # fixed label that is not part of the value. Both suffixes are stripped off
@@ -105,65 +99,44 @@ def _full_path(file):
     return os.path.join(current_app.config["UPLOAD_FOLDER"], file.storage_path)
 
 
-def _iso_utc(value):
-    """Serialize a datetime as UTC-aware.
-
-    SQLite hands back naive datetimes; a naive value means UTC, the same
-    convention ``models._is_expired`` documents.
-    """
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.isoformat()
-
-
-def _detect_line_separator(text):
-    return "crlf" if "\r\n" in text else "lf"
-
-
 def _folder_url(folder_id):
     if folder_id:
         return url_for("dashboard.view_folder", folder_id=folder_id)
     return url_for("dashboard.index")
 
 
-def _write_atomically(full_path, data):
-    """Replace a file's bytes in one step.
+def _editor_urls(file_id):
+    """The endpoint URLs the editor template fetches, or None where the scope
+    has no such endpoint.
 
-    Writes a temp file next to the target and renames it over the original:
-    same directory means the same filesystem, so ``os.replace`` is atomic and a
-    crash or a full disk leaves the previous bytes intact instead of a
-    truncated file.
+    Everything the template calls comes from here rather than being assembled
+    in JavaScript: ``url_for`` is what percent-encodes a file name with spaces,
+    '#' or Chinese characters, and the project editor injects the same shape of
+    object with different routes. ``history`` and ``restore`` are the
+    collection URLs; the revision id is appended by the page. In create mode
+    the file does not exist yet, so only ``create`` is usable.
     """
-    fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(full_path), prefix=".edit-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, full_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def _revision_storage_path(user_id, file_id, revision_id):
-    """Where one revision's blob lives, relative to UPLOAD_FOLDER.
-
-    Derived from dashboard.history_dir so the writer and the deleters cannot
-    end up with two ideas of where history lives; relative, like every other
-    storage_path in the app.
-    """
-    return os.path.relpath(
-        os.path.join(history_dir(user_id, file_id), str(revision_id)),
-        current_app.config["UPLOAD_FOLDER"],
-    )
+    create_url = url_for("editor.create_new_file")
+    if file_id is None:
+        return {
+            "content": None,
+            "history": None,
+            "restore": None,
+            "download": None,
+            "editBase": None,
+            "preview": None,
+            "create": create_url,
+        }
+    history_url = url_for("editor.list_history", file_id=file_id)
+    return {
+        "content": url_for("editor.get_content", file_id=file_id),
+        "history": history_url,
+        "restore": history_url,
+        "download": url_for("editor.download", file_id=file_id),
+        "editBase": url_for("editor.edit_file", file_id=file_id),
+        "preview": None,
+        "create": create_url,
+    }
 
 
 def _revision_or_404(file, revision_id):
@@ -176,192 +149,22 @@ def _revision_or_404(file, revision_id):
     return FileRevision.query.filter_by(id=revision_id, file_id=file.id).first_or_404()
 
 
-def _revision_blob(revision):
-    """A revision's bytes, or None if the row outlived them.
+def _save(file, data, base_revision):
+    """Save one File through the shared pipeline.
 
-    None rather than an exception so both history routes answer 404 the same
-    way get_content does for a File: a row whose bytes are gone is a 404, not
-    an empty viewer that looks like an empty document.
+    The revision table and the blob directory are the only things this module
+    contributes; the ordering and the error contract are editor_core's.
     """
-    path = os.path.join(current_app.config["UPLOAD_FOLDER"], revision.storage_path)
-    if not os.path.exists(path):
-        return None
-    with open(path, "rb") as handle:
-        return handle.read()
-
-
-def _ordered_revisions(file_id):
-    """A file's revisions, newest first.
-
-    The id breaks ties: created_at only resolves to the microsecond, and two
-    revisions written inside the same one would otherwise come back in an
-    arbitrary order, letting the panel and the retention pruner disagree about
-    which is the oldest.
-    """
-    return (
-        FileRevision.query.filter_by(file_id=file_id)
-        .order_by(FileRevision.created_at.desc(), FileRevision.id.desc())
-        .all()
+    return apply_content(
+        file,
+        data,
+        base_revision,
+        revision_model=FileRevision,
+        fk_field="file_id",
+        history_dir=history_dir(file.user_id, file.id),
+        max_size=MAX_EDITABLE_FILE_SIZE,
+        retention=RETENTION,
     )
-
-
-def _remove_revision_blob(storage_path):
-    """Undo a revision whose row never reached a commit.
-
-    Best effort by design: this runs on error paths that are already reporting
-    a failure, and the directory it leaves behind (when something else put a
-    revision in it in the meantime) is a legitimate directory, not damage.
-    """
-    path = os.path.join(current_app.config["UPLOAD_FOLDER"], storage_path)
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-    try:
-        os.rmdir(os.path.dirname(path))
-    except OSError:
-        pass
-
-
-def _prune_revisions(file):
-    """Trim a file's history down to the newest RETENTION revisions.
-
-    Called only once the save has been committed (plan §3.4 step 7): pruning
-    first would let a failed commit leave the panel offering a revision whose
-    blob had already been deleted. The blob goes before the row, which is the
-    order the rest of the app deletes in - a row left pointing at nothing is
-    the failure this prefers to bytes nothing points at.
-
-    Housekeeping, and treated as such: a save that has already been committed
-    must not be reported to the user as failed because the trim went wrong.
-    Anything left behind is trimmed by the next save, which is why a stale row
-    whose blob has already gone is recovered from rather than fatal.
-    """
-    stale = _ordered_revisions(file.id)[RETENTION:]
-    if not stale:
-        return
-    try:
-        for revision in stale:
-            path = os.path.join(current_app.config["UPLOAD_FOLDER"], revision.storage_path)
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                # Keep the row: deleting it would hide the blob rather than
-                # free it.
-                current_app.logger.exception("editor: could not remove revision blob %s", path)
-                continue
-            db.session.delete(revision)
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        current_app.logger.exception("editor: could not prune the revisions of file %s", file.id)
-
-
-def _apply_content(file, data, base_revision):
-    """Write new bytes over a file, keeping the bytes they replace.
-
-    Returns ``(payload, status)``. The save route and the history restore route
-    both come through here: restoring a version is an ordinary save whose
-    content happens to come from a revision, which is what makes a restore
-    itself restorable.
-
-    The order below is the contract. The bytes about to be replaced are on disk
-    as a revision *before* the new ones overwrite them, so a save that cannot
-    be committed can be undone with what is already written.
-    """
-    # 1. Size first: a document the editor should never have sent is refused
-    #    before anything is read or written.
-    if len(data) > MAX_EDITABLE_FILE_SIZE:
-        return {"error": "too_large", "limit": MAX_EDITABLE_FILE_SIZE}, 413
-
-    # 2. The optimistic lock, and the only check that the bytes are still there.
-    full_path = _full_path(file)
-    if not os.path.exists(full_path):
-        return {"error": "file_moved"}, 404
-    with open(full_path, "rb") as handle:
-        previous = handle.read()
-
-    current_revision = content_revision(previous)
-    if current_revision != base_revision:
-        # Someone (or something) changed the file since the editor loaded it.
-        # Hand back the revision that is actually on disk so the client can
-        # offer "overwrite" without a second round trip.
-        return {"error": "conflict", "revision": current_revision}, 409
-
-    now = datetime.now(timezone.utc)
-
-    # 3. Keep what is about to be replaced. The blob is named after the row's
-    #    primary key, so the row is flushed to get one - a flush, not a commit:
-    #    neither the revision nor the new size is visible until step 6. The
-    #    empty path is a placeholder that satisfies NOT NULL until the flush
-    #    hands back the id it is really named after.
-    revision_storage_path = None
-    try:
-        revision = FileRevision(
-            file_id=file.id, storage_path="", size=len(previous), created_at=now
-        )
-        db.session.add(revision)
-        db.session.flush()
-        revision_storage_path = _revision_storage_path(file.user_id, file.id, revision.id)
-        revision.storage_path = revision_storage_path
-        _write_atomically(_ensure_upload_dir(revision_storage_path), previous)
-    except Exception:
-        db.session.rollback()
-        if revision_storage_path:
-            _remove_revision_blob(revision_storage_path)
-        current_app.logger.exception("editor: could not keep a revision of file %s", file.id)
-        return {"error": "save_failed"}, 500
-
-    # 4. The new bytes replace the old ones atomically. _ensure_upload_dir
-    #    recreates the parent directory if the file's folder was moved on disk
-    #    since the upload.
-    try:
-        _write_atomically(_ensure_upload_dir(file.storage_path), data)
-    except OSError:
-        db.session.rollback()
-        _remove_revision_blob(revision_storage_path)
-        current_app.logger.exception("editor: could not write %s", full_path)
-        return {"error": "save_failed"}, 500
-
-    # 5. Size and timestamp are both assigned explicitly: the columns' onupdate
-    #    only fires when a value really changes, so rewriting content at the
-    #    same byte count would leave updated_at stale even though the bytes did
-    #    change (same note as api.py).
-    file.size = len(data)
-    file.updated_at = now
-
-    # 6. The revision row, the new size and the file on disk become true
-    #    together here - which is the point of writing the old bytes out first.
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        # The new bytes are already on disk, so put the old ones back: a save
-        # that reports failure must not leave the file changed, and a row
-        # claiming a size the disk does not have is the other half of that bug.
-        try:
-            _write_atomically(full_path, previous)
-        except OSError:
-            current_app.logger.exception(
-                "editor: rollback of %s failed, on-disk content is newer "
-                "than the database says",
-                full_path,
-            )
-        # The revision this save wrote has no row now, so it would be a blob
-        # nothing can ever reach.
-        _remove_revision_blob(revision_storage_path)
-        return {"error": "save_failed"}, 500
-
-    # 7. Retention, and only now: see _prune_revisions.
-    _prune_revisions(file)
-
-    return {
-        "revision": content_revision(data),
-        "size": len(data),
-        "updated_at": now.isoformat(),
-    }, 200
 
 
 @editor_bp.route("/files/new")
@@ -390,11 +193,14 @@ def new_file():
 
     return render_template(
         "editor/edit.html",
+        scope="file",
         mode="create",
         file=None,
         folder_id=folder_id,
         base_name=base_name,
+        current_path="",
         back_url=_folder_url(folder_id),
+        urls=_editor_urls(None),
     )
 
 
@@ -480,6 +286,13 @@ def create_new_file():
                 "revision": content_revision(data),
                 "size": len(data),
                 "edit_url": url_for("editor.edit_file", file_id=file.id),
+                "download_url": url_for("editor.download", file_id=file.id),
+                # The create page was rendered before the file existed, so its
+                # urls object has no content/history routes yet. Hand them over
+                # here rather than letting the page assemble /files/<id>/...
+                # paths on the client.
+                "content_url": url_for("editor.get_content", file_id=file.id),
+                "history_url": url_for("editor.list_history", file_id=file.id),
             }
         ),
         201,
@@ -497,13 +310,16 @@ def edit_file(file_id):
     file = _file_or_404(file_id)
     return render_template(
         "editor/edit.html",
+        scope="file",
         mode="edit",
         file=file,
         folder_id=file.folder_id,
         # Unused here, but the name field is in the markup either way (a
         # successful first save turns the create page into this one).
         base_name="",
+        current_path="",
         back_url=_folder_url(file.folder_id),
+        urls=_editor_urls(file.id),
     )
 
 
@@ -531,7 +347,7 @@ def get_content(file_id):
         "name": file.name,
         "folder_id": file.folder_id,
         "size": len(data),
-        "updated_at": _iso_utc(file.updated_at),
+        "updated_at": iso_utc(file.updated_at),
         "editable": True,
         "readonly_reason": None,
         "content": None,
@@ -556,7 +372,7 @@ def get_content(file_id):
             payload["readonly_reason"] = READONLY_NOT_UTF8
         else:
             payload["content"] = text
-            payload["line_separator"] = _detect_line_separator(text)
+            payload["line_separator"] = detect_line_separator(text)
             payload["revision"] = content_revision(data)
 
     response = jsonify(payload)
@@ -574,7 +390,7 @@ def save_content(file_id):
 
     The File row and its storage_path are untouched, so every share link
     already minted for this file keeps working - which is the whole point. The
-    bytes being replaced are kept as a revision first; see _apply_content.
+    bytes being replaced are kept as a revision first; see editor_core.apply_content.
     """
     file = _file_or_404(file_id)
 
@@ -597,7 +413,7 @@ def save_content(file_id):
     # No newline normalization, ever: the client already restored the file's
     # own separator with sliceDoc() (plan §1.6), and normalizing here would
     # rewrite every line of a Windows file silently.
-    body, status = _apply_content(file, content.encode("utf-8"), base_revision)
+    body, status = _save(file, content.encode("utf-8"), base_revision)
     return jsonify(body), status
 
 
@@ -617,9 +433,9 @@ def list_history(file_id):
                 {
                     "id": revision.id,
                     "size": revision.size,
-                    "created_at": _iso_utc(revision.created_at),
+                    "created_at": iso_utc(revision.created_at),
                 }
-                for revision in _ordered_revisions(file.id)
+                for revision in ordered_revisions(FileRevision, "file_id", file.id)
             ],
             "retention": RETENTION,
         }
@@ -637,7 +453,7 @@ def get_revision(file_id, revision_id):
     file = _file_or_404(file_id)
     revision = _revision_or_404(file, revision_id)
 
-    data = _revision_blob(revision)
+    data = read_revision_blob(revision.storage_path)
     if data is None:
         return jsonify({"error": "revision_moved"}), 404
 
@@ -655,7 +471,7 @@ def get_revision(file_id, revision_id):
         {
             "id": revision.id,
             "content": text,
-            "created_at": _iso_utc(revision.created_at),
+            "created_at": iso_utc(revision.created_at),
         }
     )
     response.headers["Cache-Control"] = "no-store"
@@ -690,11 +506,11 @@ def restore_revision(file_id, revision_id):
             400,
         )
 
-    data = _revision_blob(revision)
+    data = read_revision_blob(revision.storage_path)
     if data is None:
         return jsonify({"error": "revision_moved"}), 404
 
-    body, status = _apply_content(file, data, base_revision)
+    body, status = _save(file, data, base_revision)
     return jsonify(body), status
 
 
