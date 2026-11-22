@@ -194,23 +194,17 @@ def ordered_revisions(revision_model, fk_field, parent_id):
     )
 
 
-def prune_revisions(target, *, revision_model, fk_field, retention):
-    """Trim a target's history down to the newest ``retention`` revisions.
+def _delete_revisions(stale, description):
+    """Delete revision blobs, then their rows.
 
-    Called only once the save has been committed: pruning first would let a
-    failed commit leave the panel offering a revision whose blob had already
-    been deleted. The blob goes before the row, which is the order the rest of
-    the app deletes in - a row left pointing at nothing is the failure this
-    prefers to bytes nothing points at.
+    Blob before row, the order the rest of the app deletes in - a row left
+    pointing at nothing is the failure this prefers to bytes nothing points
+    at. Any revision whose blob could not be removed keeps its row: deleting
+    the row would hide the blob rather than free it.
 
-    Housekeeping, and treated as such: a save that has already been committed
-    must not be reported to the user as failed because the trim went wrong.
-    Anything left behind is trimmed by the next save, which is why a stale row
-    whose blob has already gone is recovered from rather than fatal.
+    Housekeeping: the caller has already committed what the user asked for, so
+    a failure here is logged and retried by the next save, never raised.
     """
-    stale = ordered_revisions(revision_model, fk_field, target.id)[retention:]
-    if not stale:
-        return
     upload_folder = current_app.config["UPLOAD_FOLDER"]
     try:
         for revision in stale:
@@ -220,8 +214,6 @@ def prune_revisions(target, *, revision_model, fk_field, retention):
             except FileNotFoundError:
                 pass
             except OSError:
-                # Keep the row: deleting it would hide the blob rather than
-                # free it.
                 current_app.logger.exception(
                     "editor: could not remove revision blob %s", path
                 )
@@ -230,11 +222,53 @@ def prune_revisions(target, *, revision_model, fk_field, retention):
         db.session.commit()
     except Exception:
         db.session.rollback()
-        current_app.logger.exception(
-            "editor: could not prune the revisions of %s %s",
-            type(target).__name__,
-            target.id,
-        )
+        current_app.logger.exception("editor: could not prune %s", description)
+
+
+def prune_revisions(target, *, revision_model, fk_field, retention):
+    """Trim a target's history down to the newest ``retention`` revisions.
+
+    Called only once the save has been committed: pruning first would let a
+    failed commit leave the panel offering a revision whose blob had already
+    been deleted. Anything left behind is trimmed by the next save, which is
+    why a stale row whose blob has already gone is recovered from rather than
+    fatal.
+    """
+    stale = ordered_revisions(revision_model, fk_field, target.id)[retention:]
+    if not stale:
+        return
+    _delete_revisions(
+        stale, f"the revisions of {type(target).__name__} {target.id}"
+    )
+
+
+def prune_history_budget(newest_first, max_size):
+    """Trim a whole project's history down to ``max_size`` bytes, oldest first.
+
+    A per-file retention is not enough on the project side: at up to 100 files
+    and ten versions each, one project could hold far more than its share of
+    the volume. ``newest_first`` is the project's complete revision list in the
+    order the history panel shows it (newest first), so the tail of that list
+    is what goes. A revision's ``size`` is the blob it points at, which is what
+    makes the sum the history's disk footprint.
+
+    Same timing rule as prune_revisions: only after the save was committed, and
+    only after each file's own retention trim, so a file keeps its newest
+    ``RETENTION`` versions unless the project budget itself cannot afford them.
+    """
+    total = sum(revision.size or 0 for revision in newest_first)
+    if total <= max_size:
+        return
+
+    stale = []
+    for revision in reversed(newest_first):
+        if total <= max_size:
+            break
+        stale.append(revision)
+        total -= revision.size or 0
+    if not stale:
+        return
+    _delete_revisions(stale, f"{len(stale)} revisions over the history budget")
 
 
 def apply_content(

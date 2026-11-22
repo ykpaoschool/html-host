@@ -22,6 +22,7 @@ from api import (
 from dashboard import delete_file_history, delete_user_history
 from i18n import t
 from models import AppSetting, File, Folder, Project, ShareLink, User, db, generate_mcp_secret
+from projects import delete_project_history
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -235,6 +236,10 @@ def delete_project(project_id):
     )
     if os.path.isdir(disk_dir):
         shutil.rmtree(disk_dir, ignore_errors=True)
+
+    # Revision blobs are siblings of the project directory, so the rmtree
+    # above cannot reach them.
+    delete_project_history(user_id, project.id)
 
     # Cascade removes ProjectFile + ProjectShareLink rows.
     db.session.delete(project)

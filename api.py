@@ -70,6 +70,7 @@ from projects import (
     _parse_duration,
     _parse_expiry,
     _persist_project,
+    delete_project_file_history,
 )
 
 api_bp = Blueprint("api", __name__)
@@ -954,6 +955,9 @@ def project_files_upsert(project_id):
             else _get_project_storage_path(project.user_id, project.id, rel_path)
         )
         full_path = _ensure_project_dir(storage_path)
+        # No revision is kept here, deliberately: this matches
+        # PUT /api/v1/files/<id>/content, and an agent upserting many paths at
+        # once would otherwise mint a version of every file it touched.
         _write_file_atomically(full_path, data)
         if pf:
             pf.size = len(data)
@@ -994,6 +998,9 @@ def project_file_delete(project_id, rel_path):
     full_path = os.path.join(current_app.config["UPLOAD_FOLDER"], pf.storage_path)
     if os.path.exists(full_path):
         os.remove(full_path)
+    # The revision blobs become unreachable with the row, so they go too -
+    # disk before the commit, like the file above.
+    delete_project_file_history(project.user_id, project.id, pf.id)
     db.session.delete(pf)
     project.updated_at = datetime.now(timezone.utc)
     db.session.commit()

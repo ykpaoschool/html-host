@@ -20,8 +20,13 @@ Two things here are easy to get wrong:
   lives in the path so relative URLs inherit it. Do not "simplify" this back to
   the owner raw route.
 
-No version history yet (C2): ``apply_content`` is called with
-``revision_model=None``, which skips the revision blob and the retention trim.
+Every save keeps the bytes it replaced as a ``ProjectFileRevision`` (C2), the
+same way the single-file editor does. Two bounds keep that from growing without
+limit: the shared per-file ``RETENTION``, applied by ``apply_content`` itself,
+and ``MAX_PROJECT_HISTORY_SIZE`` across the whole project, applied here after
+the save has committed. The restore route is an ordinary save whose content
+happens to come from a revision, which is what makes a restore itself
+restorable.
 """
 
 import os
@@ -35,26 +40,119 @@ from editor_core import (
     READONLY_NOT_EDITABLE,
     READONLY_NOT_UTF8,
     READONLY_TOO_LARGE,
+    RETENTION,
     apply_content,
     detect_line_separator,
     is_editable_path,
     iso_utc,
     language_for,
+    ordered_revisions,
+    prune_history_budget,
+    read_revision_blob,
 )
-from models import content_revision, db
+from models import ProjectFile, ProjectFileRevision, content_revision, db
 from projects import (
     _mint_preview_token,
     _project_file_or_404,
     _project_or_404,
+    project_file_history_dir,
 )
 
 project_editor_bp = Blueprint("project_editor", __name__)
+
+# Project-wide ceiling for revision blobs. Ten versions per file is right for
+# one file; across 100 files it could be 2 GB, so the project gets a budget of
+# its own and the oldest revisions go once it is exceeded. Confirmed with the
+# user alongside RETENTION before C2 was implemented.
+MAX_PROJECT_HISTORY_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 def _full_path(project_file):
     return os.path.join(
         current_app.config["UPLOAD_FOLDER"], project_file.storage_path
     )
+
+
+def _revision_or_404(project_file, revision_id):
+    """One of *this* project file's revisions, or 404.
+
+    Filtered by project_file_id as well as by id: a revision id belonging to
+    another file - the caller's own or anyone else's - must not be reachable
+    through this path.
+    """
+    return ProjectFileRevision.query.filter_by(
+        id=revision_id, project_file_id=project_file.id
+    ).first_or_404()
+
+
+def _project_revisions_newest_first(project):
+    """Every revision of every file in the project, newest first.
+
+    Ordering matches the panel and prune_history_budget: created_at only
+    resolves to the microsecond, so the id breaks ties and the two cannot
+    disagree about which revision is the oldest.
+    """
+    return (
+        ProjectFileRevision.query.join(
+            ProjectFile, ProjectFileRevision.project_file_id == ProjectFile.id
+        )
+        .filter(ProjectFile.project_id == project.id)
+        .order_by(
+            ProjectFileRevision.created_at.desc(), ProjectFileRevision.id.desc()
+        )
+        .all()
+    )
+
+
+def _save(project, project_file, data, base_revision):
+    """Save one project file through the shared pipeline, then trim.
+
+    ``apply_content`` owns the ordering and the error contract; this module
+    contributes the revision table and the per-project blob directory. The
+    project-wide budget is trimmed only after the save committed and after the
+    per-file retention trim inside ``apply_content`` - a save that reports
+    failure must not have moved history around, and a file should keep its own
+    last ten versions before the budget starts taking the oldest of anything.
+    """
+    body, status = apply_content(
+        project_file,
+        data,
+        base_revision,
+        revision_model=ProjectFileRevision,
+        fk_field="project_file_id",
+        history_dir=project_file_history_dir(
+            project.user_id, project.id, project_file.id
+        ),
+        max_size=MAX_EDITABLE_FILE_SIZE,
+        retention=RETENTION,
+    )
+    if status != 200:
+        return body, status
+
+    # Touching a child row does not bump the parent's onupdate timestamp, and
+    # the project list shows updated_at. Best effort: the save itself has
+    # already been committed, so a failure here must not report it as failed.
+    project.updated_at = datetime.now(timezone.utc)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "project_editor: could not bump updated_at of project %s", project.id
+        )
+
+    # Housekeeping as well: an over-budget history is trimmed again by the
+    # next save, so it never turns a successful save into an error - including
+    # when the query itself fails, which is why the whole step is guarded.
+    try:
+        revisions = _project_revisions_newest_first(project)
+    except Exception:
+        current_app.logger.exception(
+            "project_editor: could not read the history of project %s", project.id
+        )
+        return body, status
+    prune_history_budget(revisions, MAX_PROJECT_HISTORY_SIZE)
+    return body, status
 
 
 def _group_files(files):
@@ -107,15 +205,27 @@ def edit(project_id, rel_path):
             pf.path for pf in files if is_editable_path(pf.path)
         },
         back_url=url_for("projects.detail", project_id=project.id),
+        # Only the panel's footnote differs from the single-file editor: a
+        # project also has a total budget, which the note has to mention or it
+        # would promise ten versions per file indefinitely.
+        history_budget=MAX_PROJECT_HISTORY_SIZE,
         urls={
             "content": url_for(
                 "project_editor.get_content",
                 project_id=project.id,
                 rel_path=project_file.path,
             ),
-            # C2 fills these in; None hides the history button.
-            "history": None,
-            "restore": None,
+            "history": url_for(
+                "project_editor.list_history",
+                project_id=project.id,
+                rel_path=project_file.path,
+            ),
+            # The revision id and "/restore" are appended by the page.
+            "restore": url_for(
+                "project_editor.list_history",
+                project_id=project.id,
+                rel_path=project_file.path,
+            ),
             "download": url_for(
                 "projects.project_file_download",
                 project_id=project.id,
@@ -244,30 +354,113 @@ def save_content(project_id, rel_path):
     # No newline normalization, ever: the client restored the file's own
     # separator with sliceDoc(), and normalizing here would rewrite every line
     # of a Windows file silently.
-    body, status = apply_content(
-        project_file,
-        content.encode("utf-8"),
-        base_revision,
-        revision_model=None,
-        fk_field="project_file_id",
-        history_dir=None,
-        max_size=MAX_EDITABLE_FILE_SIZE,
-        retention=None,
+    body, status = _save(project, project_file, content.encode("utf-8"), base_revision)
+    return jsonify(body), status
+
+
+@project_editor_bp.route(
+    "/projects/<int:project_id>/files/<path:rel_path>/history"
+)
+@login_required
+def list_history(project_id, rel_path):
+    """The revisions kept for this project file, newest first.
+
+    Deliberately without content, for the same reason as editor.list_history:
+    ten versions of up to MAX_EDITABLE_FILE_SIZE each would make this the
+    largest response in the app, and the panel shows one at a time.
+    """
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+    response = jsonify(
+        {
+            "revisions": [
+                {
+                    "id": revision.id,
+                    "size": revision.size,
+                    "created_at": iso_utc(revision.created_at),
+                }
+                for revision in ordered_revisions(
+                    ProjectFileRevision, "project_file_id", project_file.id
+                )
+            ],
+            "retention": RETENTION,
+        }
     )
+    # prevent_caching only covers text/html; a stale history list is exactly
+    # what a save followed by a reload would show.
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
-    if status == 200:
-        # Touching a child row does not bump the parent's onupdate timestamp,
-        # and the project list shows updated_at. Best effort: the save itself
-        # has already been committed, so a failure here must not report the
-        # save as failed.
-        project.updated_at = datetime.now(timezone.utc)
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            current_app.logger.exception(
-                "project_editor: could not bump updated_at of project %s",
-                project.id,
-            )
 
+@project_editor_bp.route(
+    "/projects/<int:project_id>/files/<path:rel_path>/history/<int:revision_id>"
+)
+@login_required
+def get_revision(project_id, rel_path, revision_id):
+    """One revision's content, for the panel's preview."""
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+    revision = _revision_or_404(project_file, revision_id)
+
+    data = read_revision_blob(revision.storage_path)
+    if data is None:
+        return jsonify({"error": "revision_moved"}), 404
+
+    try:
+        # utf-8-sig, matching get_content. The except is a guard against a
+        # hand-edited database or disk: a revision is only ever written from
+        # content that passed the UTF-8 decode on its way into the editor.
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return jsonify({"error": "revision_not_utf8"}), 404
+
+    response = jsonify(
+        {
+            "id": revision.id,
+            "content": text,
+            "created_at": iso_utc(revision.created_at),
+        }
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@project_editor_bp.route(
+    "/projects/<int:project_id>/files/<path:rel_path>/history/"
+    "<int:revision_id>/restore",
+    methods=["POST"],
+)
+@login_required
+def restore_revision(project_id, rel_path, revision_id):
+    """Put an old revision back. Body: {base_revision}.
+
+    An ordinary save whose content comes from a revision, through the same
+    optimistic lock: the file can have changed while the panel was open, so a
+    stale restore is a 409 rather than a silent overwrite. The content being
+    replaced is itself kept, which is what makes a restore restorable.
+    """
+    project = _project_or_404(project_id)
+    project_file = _project_file_or_404(project, rel_path)
+    revision = _revision_or_404(project_file, revision_id)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_request"}), 400
+    base_revision = payload.get("base_revision")
+    if not isinstance(base_revision, str):
+        return (
+            jsonify(
+                {
+                    "error": "invalid_request",
+                    "message": "'base_revision' is required.",
+                }
+            ),
+            400,
+        )
+
+    data = read_revision_blob(revision.storage_path)
+    if data is None:
+        return jsonify({"error": "revision_moved"}), 404
+
+    body, status = _save(project, project_file, data, base_revision)
     return jsonify(body), status
